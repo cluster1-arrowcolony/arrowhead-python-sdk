@@ -106,36 +106,35 @@ class Framework:
         if additional_certs:
             cert_chain.extend(additional_certs)
 
-        # Save to temporary files for SSL context
-        with tempfile.NamedTemporaryFile(
-            mode="wb", delete=False, suffix=".pem"
-        ) as cert_file:
+        # Use secure temporary directory for SSL files
+        self._temp_dir = tempfile.TemporaryDirectory()
+        temp_dir_path = self._temp_dir.name
+        
+        from pathlib import Path
+        cert_path = Path(temp_dir_path) / "cert.pem" 
+        key_path = Path(temp_dir_path) / "key.pem"
+
+        # Write cert file
+        with open(cert_path, "wb") as cert_file:
             for certificate in cert_chain:
                 cert_file.write(certificate.public_bytes(serialization.Encoding.PEM))
-            cert_path = cert_file.name
 
-        with tempfile.NamedTemporaryFile(
-            mode="wb", delete=False, suffix=".key"
-        ) as key_file:
-            key_file.write(
-                private_key.private_bytes(
-                    encoding=serialization.Encoding.PEM,
-                    format=serialization.PrivateFormat.PKCS8,
-                    encryption_algorithm=serialization.NoEncryption(),
-                )
-            )
-            key_path = key_file.name
+        # Write key file securely with restricted permissions
+        key_bytes = private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+        key_fd = os.open(key_path, os.O_WRONLY | os.O_CREAT, 0o600)
+        with os.fdopen(key_fd, "wb") as key_file:
+            key_file.write(key_bytes)
 
         # Create SSL context
         self.ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        self.ssl_context.load_cert_chain(cert_path, key_path)
+        self.ssl_context.load_cert_chain(str(cert_path), str(key_path))
 
         # Load CA certificates
         self.ssl_context.load_verify_locations(truststore_path)
-
-        # Store paths for cleanup
-        self._cert_path = cert_path
-        self._key_path = key_path
 
     def handle_service(
         self,
@@ -270,10 +269,9 @@ class Framework:
         if self.client:
             self.client.close()
 
-        # Clean up temporary SSL files
-        if hasattr(self, "_cert_path"):
+        # Clean up temporary SSL directory
+        if hasattr(self, "_temp_dir"):
             try:
-                os.unlink(self._cert_path)
-                os.unlink(self._key_path)
+                self._temp_dir.cleanup()
             except:
                 pass

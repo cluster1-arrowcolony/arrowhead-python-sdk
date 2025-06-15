@@ -87,53 +87,26 @@ class ArrowheadClient:
                     )
                     key_path = key_file.name
 
-                # Load CA certificates from PKCS#12 truststore
-                with open(self.config.truststore_path, "rb") as f:
-                    truststore_data = f.read()
-
-                # Try to decode as PKCS#12 first
-                try:
-                    _, _, ca_certs = pkcs12.load_key_and_certificates(
-                        truststore_data,
-                        self.config.password.encode() if self.config.password else None,
-                    )
-
-                    with tempfile.NamedTemporaryFile(
-                        mode="wb", delete=False, suffix=".pem"
-                    ) as ca_file:
-                        if ca_certs:
-                            for ca_cert in ca_certs:
-                                ca_file.write(
-                                    ca_cert.public_bytes(serialization.Encoding.PEM)
-                                )
-                        ca_path = ca_file.name
-
-                except Exception:
-                    # Fall back to treating as PEM
-                    with tempfile.NamedTemporaryFile(
-                        mode="wb", delete=False, suffix=".pem"
-                    ) as ca_file:
-                        ca_file.write(truststore_data)
-                        ca_path = ca_file.name
-
                 session.cert = (cert_path, key_path)
-                session.verify = ca_path if self.config.verify_ssl else False
 
-                # Log certificate verification setup
-                logger.debug(f"Client certificate: {cert_path}")
+                # Setup certificate verification - requests library handles PEM files directly
                 if self.config.verify_ssl:
-                    logger.debug(f"CA certificate bundle: {ca_path}")
+                    session.verify = self.config.truststore_path
+                    logger.debug(f"CA certificate bundle: {self.config.truststore_path}")
                 else:
+                    session.verify = False
                     logger.warning(
                         "SSL certificate verification is DISABLED - this should only be used in development"
                     )
+
+                # Log certificate setup
+                logger.debug(f"Client certificate: {cert_path}")
 
                 # Clean up temp files when session is closed
                 def cleanup():
                     try:
                         os.unlink(cert_path)
                         os.unlink(key_path)
-                        os.unlink(ca_path)
                     except:
                         pass
 

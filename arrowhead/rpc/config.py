@@ -38,3 +38,7 @@ class Config:
     truststore_path: Optional[str] = None
     password: Optional[str] = None
     verify_ssl: bool = True
+    root_keystore_path: Optional[str] = None
+    root_keystore_alias: Optional[str] = None
+    cloud_keystore_path: Optional[str] = None
+    cloud_keystore_alias: Optional[str] = None

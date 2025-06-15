@@ -35,30 +35,14 @@ class ServiceInfo:
 class ArrowheadProvider:
     """Base class for Arrowhead providers using decorators."""
 
-    def __init__(
-        self, system_name: Optional[str] = None, key: Optional[str] = None
-    ) -> None:
+    def __init__(self, system_name: Optional[str] = None) -> None:
         """Initialize the provider.
 
         Args:
-            system_name: Base name of the Arrowhead system. If None, converts class name to kebab-case.
-            key: Unique key for this instance. If provided, appended to system name as system-name-key.
+            system_name: Name of the Arrowhead system. If None, converts class name to kebab-case.
         """
-        base_name = system_name or _camel_to_kebab(self.__class__.__name__)
-
-        # Check if key is provided as instance attribute
-        if key is None and hasattr(self, "key"):
-            key = self.key
-
-        if key is None:
-            raise ValueError(
-                "Provider instances must have a 'key' attribute or parameter for unique identification"
-            )
-
-        # Combine base name with key for unique system name
-        self.system_name = f"{base_name}-{key}"
-        self.base_name = base_name
-        self.key = key
+        self.system_name = system_name or _camel_to_kebab(self.__class__.__name__)
+        self.base_name = self.system_name
         self.services: List[ServiceInfo] = []
         self.framework: Optional[Framework] = None
         self._discover_services()
@@ -72,7 +56,7 @@ class ArrowheadProvider:
 
                 # Generate endpoint if not explicitly provided
                 if service_info.endpoint is None:
-                    # Use provider name + function name: /car-factory/create-car
+                    # Use provider name + function name: /carprovider/create-car
                     func_part = _snake_to_kebab(attr_name)
                     service_info.endpoint = f"/{self.system_name}/{func_part}"
 
@@ -294,7 +278,6 @@ def system(
     Args:
         cls_or_name: Either a class (when used without parentheses) or a system name string.
                     If not provided, converts class name from CamelCase to kebab-case.
-                    The final system name will be {name}-{key} where key is the instance's unique identifier.
 
     Returns:
         Decorated class that inherits from ArrowheadProvider, or a decorator function.
@@ -305,13 +288,11 @@ def system(
 
         # Create a new class that inherits from both the original class and ArrowheadProvider
         class ProviderClass(cls, ArrowheadProvider):  # type: ignore
-            def __init__(
-                self, key: Optional[str] = None, *args: Any, **kwargs: Any
-            ) -> None:
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
                 # Initialize the original class
                 cls.__init__(self, *args, **kwargs)  # type: ignore
-                # Initialize ArrowheadProvider with the determined name and key
-                ArrowheadProvider.__init__(self, system_name, key)
+                # Initialize ArrowheadProvider with the determined name
+                ArrowheadProvider.__init__(self, system_name)
 
         # Copy class attributes
         ProviderClass.__name__ = cls.__name__

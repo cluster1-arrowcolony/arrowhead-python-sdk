@@ -46,7 +46,7 @@ def setup_logging(verbose: bool = False) -> None:
 
 
 def load_config() -> Config:
-    """Load configuration from environment variables."""
+    """Load configuration from environment variables for applications."""
     return Config(
         tls=os.getenv("ARROWHEAD_TLS", "true").lower() in ("true", "1"),
         authorization_host=os.getenv("ARROWHEAD_AUTHORIZATION_HOST", "c1-authorization"),
@@ -59,6 +59,27 @@ def load_config() -> Config:
         truststore_path=os.getenv("ARROWHEAD_TRUSTSTORE"),
         password=os.getenv("ARROWHEAD_KEYSTORE_PASSWORD"),
         verify_ssl=os.getenv("ARROWHEAD_VERIFY_SSL", "true").lower() in ("true", "1"),
+    )
+
+
+def load_sysops_config() -> Config:
+    """Load configuration for CLI management operations using sysops certificate."""
+    return Config(
+        tls=os.getenv("ARROWHEAD_TLS", "true").lower() in ("true", "1"),
+        authorization_host=os.getenv("ARROWHEAD_AUTHORIZATION_HOST", "c1-authorization"),
+        authorization_port=int(os.getenv("ARROWHEAD_AUTHORIZATION_PORT", "8445")),
+        service_registry_host=os.getenv("ARROWHEAD_SERVICEREGISTRY_HOST", "c1-serviceregistry"),
+        service_registry_port=int(os.getenv("ARROWHEAD_SERVICEREGISTRY_PORT", "8443")),
+        orchestrator_host=os.getenv("ARROWHEAD_ORCHESTRATOR_HOST", "c1-orchestrator"),
+        orchestrator_port=int(os.getenv("ARROWHEAD_ORCHESTRATOR_PORT", "8441")),
+        keystore_path=os.getenv("ARROWHEAD_SYSOPS_KEYSTORE", os.getenv("ARROWHEAD_KEYSTORE_PATH")),
+        truststore_path=os.getenv("ARROWHEAD_TRUSTSTORE"),
+        password=os.getenv("ARROWHEAD_KEYSTORE_PASSWORD"),
+        verify_ssl=os.getenv("ARROWHEAD_VERIFY_SSL", "true").lower() in ("true", "1"),
+        root_keystore_path=os.getenv("ARROWHEAD_ROOT_KEYSTORE"),
+        root_keystore_alias=os.getenv("ARROWHEAD_ROOT_KEYSTORE_ALIAS"),
+        cloud_keystore_path=os.getenv("ARROWHEAD_CLOUD_KEYSTORE"),
+        cloud_keystore_alias=os.getenv("ARROWHEAD_CLOUD_KEYSTORE_ALIAS"),
     )
 
 
@@ -93,7 +114,7 @@ def version() -> None:
 @cli.command()
 def env() -> None:
     """Show environment configuration."""
-    config = load_config()
+    config = load_sysops_config()
 
     table = Table(title="Environment Configuration")
     table.add_column("Setting", style="cyan")
@@ -124,7 +145,7 @@ def list_systems(filter: Optional[str]) -> None:
     """List available systems."""
     client = None
     try:
-        config = load_config()
+        config = load_sysops_config()
         client = ArrowheadClient(config)
 
         systems_list = client.management.get_systems()
@@ -173,7 +194,7 @@ def list_systems(filter: Optional[str]) -> None:
 def get_system(id: int) -> None:
     """Get info about a system."""
     try:
-        config = load_config()
+        config = load_sysops_config()
         client = ArrowheadClient(config)
 
         system = client.management.get_system_by_id(id)
@@ -224,19 +245,76 @@ def get_system(id: int) -> None:
 def register_system(name: str, address: str, port: int) -> None:
     """Register a system."""
     try:
-        config = load_config()
+        config = load_sysops_config()
         client = ArrowheadClient(config)
 
-        # Generate certificate if needed
-        auth_info = ""
-        try:
-            cert_manager = load_cert_manager()
-            public_key = cert_manager.get_public_key(
-                config.keystore_path or "", config.password or ""
+        # Validate system name
+        if not is_valid_system_name(name):
+            rprint(
+                "[red]Error: System name is invalid. Only letters and numbers are allowed.[/red]"
             )
-            auth_info = public_key
-        except Exception as e:
-            logger.warning(f"Could not generate certificate: {e}")
+            sys.exit(1)
+
+        # Generate certificate for the new system
+        root_keystore = config.root_keystore_path
+        root_alias = config.root_keystore_alias
+        cloud_keystore = config.cloud_keystore_path
+        cloud_alias = config.cloud_keystore_alias
+        password = config.password or click.prompt("Keystore password", hide_input=True, confirmation_prompt=True)
+
+        if not root_keystore:
+            rprint(f"[red]Error: ARROWHEAD_ROOT_KEYSTORE environment variable is required.[/red]")
+            sys.exit(1)
+
+        if not root_alias:
+            rprint(f"[red]Error: ARROWHEAD_ROOT_KEYSTORE_ALIAS environment variable is required.[/red]")
+            sys.exit(1)
+
+        if not cloud_keystore:
+            rprint(f"[red]Error: ARROWHEAD_CLOUD_KEYSTORE environment variable is required.[/red]")
+            sys.exit(1)
+
+        if not cloud_alias:
+            rprint(f"[red]Error: ARROWHEAD_CLOUD_KEYSTORE_ALIAS environment variable is required.[/red]")
+            sys.exit(1)
+
+        if not os.path.exists(root_keystore):
+            rprint(f"[red]Error: Root keystore file '{root_keystore}' not found.[/red]")
+            sys.exit(1)
+
+        if not os.path.exists(cloud_keystore):
+            rprint(f"[red]Error: Cloud keystore file '{cloud_keystore}' not found.[/red]")
+            sys.exit(1)
+
+        system_keystore = f"{name}.p12"
+        system_dname = f"{name}.{cloud_alias}"
+        san = generate_subject_alternative_name(name)
+
+        # Check if system keystore already exists
+        if os.path.exists(system_keystore):
+            rprint(
+                f"[red]Error: System keystore '{system_keystore}' already exists[/red]"
+            )
+            sys.exit(1)
+
+        # Load certificate manager and create keystore
+        cert_manager = load_cert_manager()
+
+        with console.status(f"Generating certificate for system '{name}'..."):
+            cert_manager.create_system_keystore(
+                root_keystore=root_keystore,
+                root_alias=root_alias,
+                cloud_keystore=cloud_keystore,
+                cloud_alias=cloud_alias,
+                system_keystore=system_keystore,
+                system_dname=system_dname,
+                system_alias=name,
+                san=san,
+                password=password,
+            )
+
+        # Get public key for authentication info from the newly created certificate
+        auth_info = cert_manager.get_public_key(system_keystore, password)
 
         system_reg = SystemRegistration(
             address=address,
@@ -249,24 +327,31 @@ def register_system(name: str, address: str, port: int) -> None:
         system = client.management.register_system(system_reg)
 
         rprint(
-            f"[green]System '{name}' registered successfully with ID {system.id}[/green]"
+            f"[green]✓ Certificate generated successfully: {system_keystore}[/green]"
+        )
+        rprint(f"[blue]✓ Public key file created: {name}.pub[/blue]")
+        rprint(
+            f"[green]✓ System '{name}' registered successfully with ID {system.id}[/green]"
         )
 
-        # Create environment file
-        env_content = f"""# Arrowhead system configuration for {name}
-ARROWHEAD_SYSTEM_NAME={name}
-ARROWHEAD_SYSTEM_ADDRESS={address}
-ARROWHEAD_SYSTEM_PORT={port}
-ARROWHEAD_KEYSTORE_PATH=./{name}.p12
-ARROWHEAD_KEYSTORE_PASSWORD={config.password or 'changeit'}
-ARROWHEAD_TRUSTSTORE=./truststore.pem
-ARROWHEAD_TLS=true
-ARROWHEAD_SERVICEREGISTRY_HOST={config.service_registry_host}
-ARROWHEAD_SERVICEREGISTRY_PORT={config.service_registry_port}
-ARROWHEAD_ORCHESTRATOR_HOST={config.orchestrator_host}
-ARROWHEAD_ORCHESTRATOR_PORT={config.orchestrator_port}
-ARROWHEAD_AUTHORIZATION_HOST={config.authorization_host}
-ARROWHEAD_AUTHORIZATION_PORT={config.authorization_port}
+        # Create environment file with same format as Go SDK
+        tls_str = "true" if config.tls else "false"
+        truststore_path = config.truststore_path or "./truststore.pem"
+        
+        env_content = f"""export ARROWHEAD_TLS={tls_str}
+export ARROWHEAD_VERBOSE=false
+export ARROWHEAD_AUTHORIZATION_HOST={config.authorization_host}
+export ARROWHEAD_AUTHORIZATION_PORT={config.authorization_port}
+export ARROWHEAD_SERVICEREGISTRY_HOST={config.service_registry_host}
+export ARROWHEAD_SERVICEREGISTRY_PORT={config.service_registry_port}
+export ARROWHEAD_ORCHESTRATOR_HOST={config.orchestrator_host}
+export ARROWHEAD_ORCHESTRATOR_PORT={config.orchestrator_port}
+export ARROWHEAD_KEYSTORE_PATH=./{name}.p12
+export ARROWHEAD_KEYSTORE_PASSWORD={config.password or '123456'}
+export ARROWHEAD_TRUSTSTORE={truststore_path}
+export ARROWHEAD_SYSTEM_NAME={name}
+export ARROWHEAD_SYSTEM_ADDRESS={address}
+export ARROWHEAD_SYSTEM_PORT={port}
 """
 
         with open(f"{name}.env", "w") as f:
@@ -286,7 +371,7 @@ ARROWHEAD_AUTHORIZATION_PORT={config.authorization_port}
 def unregister_system(id: int) -> None:
     """Unregister a system."""
     try:
-        config = load_config()
+        config = load_sysops_config()
         client = ArrowheadClient(config)
 
         client.management.unregister_system_by_id(id)
@@ -310,7 +395,7 @@ def services() -> None:
 def list_services() -> None:
     """List available services."""
     try:
-        config = load_config()
+        config = load_sysops_config()
         client = ArrowheadClient(config)
 
         services_list = client.management.get_services()
@@ -363,7 +448,7 @@ def list_services() -> None:
 def register_service(system: str, definition: str, uri: str, method: str) -> None:
     """Register a service for a system."""
     try:
-        config = load_config()
+        config = load_sysops_config()
         client = ArrowheadClient(config)
 
         # Get the provider system
@@ -426,7 +511,7 @@ def register_service(system: str, definition: str, uri: str, method: str) -> Non
 def unregister_service(id: int) -> None:
     """Unregister a service by ID."""
     try:
-        config = load_config()
+        config = load_sysops_config()
         client = ArrowheadClient(config)
 
         # Get service details first for confirmation
@@ -461,7 +546,7 @@ def unregister_service(id: int) -> None:
 def get_service(id: int, authinfo: bool) -> None:
     """Get detailed information about a service."""
     try:
-        config = load_config()
+        config = load_sysops_config()
         client = ArrowheadClient(config)
 
         service = client.management.get_service_by_id(id)
@@ -547,7 +632,7 @@ def auths() -> None:
 def list_authorizations() -> None:
     """List authorization rules."""
     try:
-        config = load_config()
+        config = load_sysops_config()
         client = ArrowheadClient(config)
 
         auths = client.management.get_authorizations()
@@ -586,7 +671,7 @@ def list_authorizations() -> None:
 def add_authorization(consumer: str, provider: str, service: str) -> None:
     """Add authorization rule."""
     try:
-        config = load_config()
+        config = load_sysops_config()
         client = ArrowheadClient(config)
 
         auth = client.management.add_authorization(consumer, provider, service)
@@ -607,7 +692,7 @@ def add_authorization(consumer: str, provider: str, service: str) -> None:
 def remove_authorization(id: int) -> None:
     """Remove an authorization rule by ID."""
     try:
-        config = load_config()
+        config = load_sysops_config()
         client = ArrowheadClient(config)
 
         # Get authorization details first for confirmation
@@ -682,22 +767,37 @@ def generate_certificate(
         sys.exit(1)
 
     try:
-        config = load_config()
+        config = load_sysops_config()
 
-        # Use provided values or defaults
-        root_keystore = root_keystore or "master.p12"
-        root_alias = root_alias or "master"
-        cloud_keystore = cloud_keystore or "sysop.p12"
-        cloud_alias = cloud_alias or "sysop"
-        password = password or config.password or "changeit"
+        # Use provided values or environment variables
+        root_keystore = root_keystore or config.root_keystore_path
+        root_alias = root_alias or config.root_keystore_alias
+        cloud_keystore = cloud_keystore or config.cloud_keystore_path
+        cloud_alias = cloud_alias or config.cloud_keystore_alias
+        password = password or config.password or click.prompt("Keystore password", hide_input=True, confirmation_prompt=True)
 
-        # Check if required files exist
+        if not root_keystore:
+            rprint(f"[red]Error: Root keystore path required. Use --root-keystore or set ARROWHEAD_ROOT_KEYSTORE.[/red]")
+            sys.exit(1)
+
+        if not root_alias:
+            rprint(f"[red]Error: Root keystore alias required. Use --root-alias or set ARROWHEAD_ROOT_KEYSTORE_ALIAS.[/red]")
+            sys.exit(1)
+
+        if not cloud_keystore:
+            rprint(f"[red]Error: Cloud keystore path required. Use --cloud-keystore or set ARROWHEAD_CLOUD_KEYSTORE.[/red]")
+            sys.exit(1)
+
+        if not cloud_alias:
+            rprint(f"[red]Error: Cloud keystore alias required. Use --cloud-alias or set ARROWHEAD_CLOUD_KEYSTORE_ALIAS.[/red]")
+            sys.exit(1)
+
         if not os.path.exists(root_keystore):
-            rprint(f"[red]Error: Root keystore '{root_keystore}' not found[/red]")
+            rprint(f"[red]Error: Root keystore file '{root_keystore}' not found.[/red]")
             sys.exit(1)
 
         if not os.path.exists(cloud_keystore):
-            rprint(f"[red]Error: Cloud keystore '{cloud_keystore}' not found[/red]")
+            rprint(f"[red]Error: Cloud keystore file '{cloud_keystore}' not found.[/red]")
             sys.exit(1)
 
         system_keystore = f"{name}.p12"
@@ -801,7 +901,7 @@ def convert_p12_to_pem(
         sys.exit(1)
 
     try:
-        config = load_config()
+        config = load_sysops_config()
         password = password or config.password or "changeit"
 
         # Generate default output filenames if not provided
@@ -826,21 +926,45 @@ def convert_p12_to_pem(
 
 @cli.command()
 @click.option("--service", required=True, help="Service definition to orchestrate")
-def orchestrate(service: str) -> None:
+@click.option("--system", help="Requester system name (overrides env)")
+@click.option("--address", help="Requester system address (overrides env)")
+@click.option("--port", type=int, help="Requester system port (overrides env)")
+@click.option("--keystore", help="Requester keystore path (overrides env)")
+@click.option("--password", help="Requester keystore password (overrides env)")
+@click.option("--compact", is_flag=True, help="Compact output format")
+def orchestrate(
+    service: str,
+    system: Optional[str],
+    address: Optional[str],
+    port: Optional[int],
+    keystore: Optional[str],
+    password: Optional[str],
+    compact: bool,
+) -> None:
     """Request service orchestration."""
     try:
-        config = load_config()
+        # Load base config from environment
+        config = load_sysops_config()
+
+        # Prioritize flags over environment variables
+        requester_system_name = system or os.getenv("ARROWHEAD_SYSTEM_NAME", "cli-consumer")
+        requester_address = address or os.getenv("ARROWHEAD_SYSTEM_ADDRESS", "localhost")
+        requester_port = port or int(os.getenv("ARROWHEAD_SYSTEM_PORT", "8080"))
+        
+        # Update config with flag overrides if provided
+        if keystore:
+            config.keystore_path = keystore
+        if password:
+            config.password = password
+
+        # Re-initialize client with potentially modified config
         client = ArrowheadClient(config)
 
         from ..rpc.utils import build_orchestration_request
 
-        # Build orchestration request
-        system_name = os.getenv("ARROWHEAD_SYSTEM_NAME", "cli-consumer")
-        address = os.getenv("ARROWHEAD_SYSTEM_ADDRESS", "localhost")
-        port = int(os.getenv("ARROWHEAD_SYSTEM_PORT", "8080"))
-
+        # Build orchestration request using prioritized values
         orchestration_request = build_orchestration_request(
-            system_name, address, port, service
+            requester_system_name, requester_address, requester_port, service
         )
 
         response = client.orchestrate(orchestration_request)
@@ -849,19 +973,38 @@ def orchestrate(service: str) -> None:
             rprint(f"[yellow]No providers found for service: {service}[/yellow]")
             return
 
-        table = Table(title=f"Orchestration Results for '{service}'")
-        table.add_column("Provider", style="green")
-        table.add_column("Address", style="blue")
-        table.add_column("URI", style="magenta")
-        table.add_column("Secure", style="cyan")
+        # Handle compact vs. detailed output
+        if compact:
+            # Compact table format
+            table = Table(title=f"Orchestration: {service}")
+            table.add_column("Provider", style="green")
+            table.add_column("Address", style="blue")
+            table.add_column("URI", style="magenta")
 
-        for matched_service in response.response:
-            table.add_row(
-                matched_service.provider.system_name,
-                f"{matched_service.provider.address}:{matched_service.provider.port}",
-                matched_service.service_uri,
-                matched_service.secure,
-            )
+            for matched_service in response.response:
+                table.add_row(
+                    matched_service.provider.system_name,
+                    f"{matched_service.provider.address}:{matched_service.provider.port}",
+                    matched_service.service_uri,
+                )
+        else:
+            # Detailed table format
+            table = Table(title=f"Orchestration Results for '{service}'")
+            table.add_column("Provider", style="green")
+            table.add_column("Address", style="blue")
+            table.add_column("URI", style="magenta")
+            table.add_column("Secure", style="cyan")
+            table.add_column("Interfaces", style="yellow")
+
+            for matched_service in response.response:
+                interfaces = ", ".join([iface.interface_name for iface in matched_service.interfaces])
+                table.add_row(
+                    matched_service.provider.system_name,
+                    f"{matched_service.provider.address}:{matched_service.provider.port}",
+                    matched_service.service_uri,
+                    matched_service.secure,
+                    interfaces,
+                )
 
         console.print(table)
 

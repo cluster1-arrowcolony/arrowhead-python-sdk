@@ -37,7 +37,12 @@ def build_orchestration_request(
         preferred_providers = []
 
     if orchestration_flags is None:
-        orchestration_flags = OrchestrationFlags()
+        # This is the fix: set matchmaking and overrideStore to True
+        # to match the Go implementation's behavior.
+        orchestration_flags = OrchestrationFlags(
+            matchmaking=True,
+            overrideStore=True
+        )
 
     requester_system = RequesterSystem(
         systemName=system_name, address=address, port=port
