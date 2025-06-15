@@ -355,7 +355,7 @@ class CarFactoryProvider:
         # No key management needed - system name comes from decorator
         self.cars: List[Car] = []
 
-    @service("create-car", method="POST")
+    @service("create-car", method="POST", endpoint="/carfactory")
     def create_car(self, payload):
         """Create a new car."""
         logger.info("Creating car")
@@ -368,7 +368,7 @@ class CarFactoryProvider:
         
         return {"status": "success", "message": "Car created successfully"}
 
-    @service("get-car")  # Auto-detects GET method (no payload parameter)
+    @service("get-car", method="GET", endpoint="/carfactory")
     def get_cars(self):
         """Get all cars."""
         logger.info("Retrieving all cars")
