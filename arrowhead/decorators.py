@@ -8,6 +8,7 @@ without dealing with the underlying Framework complexity.
 import functools
 import inspect
 import json
+import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Type, TypeVar, Union
@@ -115,10 +116,18 @@ class ArrowheadProvider:
     def stop(self) -> None:
         """Stop the provider and clean up resources."""
         if self.framework:
-            self.framework.close()
+            if self.framework.client:
+                try:
+                    # Prefer using a running loop if one exists
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(self.framework.aclose())
+                except RuntimeError: # 'RuntimeError: no running event loop'
+                    # If no loop is running (e.g., in a simple script), run a new one
+                    asyncio.run(self.framework.aclose())
+
             logger.info("Provider stopped")
 
-    def send_request(
+    async def send_request(
         self,
         service_definition: str,
         payload: Optional[Dict[str, Any]] = None,
@@ -152,7 +161,7 @@ class ArrowheadProvider:
             )
 
             # Send request via framework
-            response_bytes = self.framework.send_request(service_definition, params)
+            response_bytes = await self.framework.send_request(service_definition, params)
 
             # Parse JSON response
             return json.loads(response_bytes.decode("utf-8"))
@@ -170,7 +179,7 @@ class ArrowheadProvider:
             def __init__(self, handler: Callable[..., Any]) -> None:
                 self.handler = handler
 
-            def handle_request(self, params: Params) -> bytes:
+            async def handle_request(self, params: Params) -> bytes:
                 try:
                     # Parse payload if it exists
                     payload_data = {}
@@ -239,13 +248,13 @@ class ArrowheadProvider:
                     # Call handler with determined arguments
                     if not param_items:
                         # No parameters except self
-                        result = self.handler()
+                        result = await self.handler()
                     elif kwargs:
                         # Has keyword arguments
-                        result = self.handler(*args, **kwargs)
+                        result = await self.handler(*args, **kwargs)
                     else:
                         # Only positional arguments
-                        result = self.handler(*args)
+                        result = await self.handler(*args)
 
                     # Convert result to bytes
                     if isinstance(result, bytes):

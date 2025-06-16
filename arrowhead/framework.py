@@ -4,18 +4,16 @@ import logging
 import os
 import ssl
 import tempfile
-from threading import Thread
-from typing import Any, Callable, Dict, List, Optional
+from typing import Optional
 
-from cryptography import x509
+import uvicorn
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.serialization import pkcs12
-from flask import Flask, jsonify, request
-from flask_cors import CORS
+from fastapi import FastAPI, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 
-from .core.models import System, SystemRegistration
 from .rpc.client import ArrowheadClient
-from .rpc.config import Config, HTTPMethod
+from .rpc.config import HTTPMethod
 from .rpc.utils import build_orchestration_request
 from .service import Params, Service
 
@@ -27,15 +25,23 @@ class Framework:
 
     def __init__(self) -> None:
         """Initialize the Framework."""
-        self.app = Flask(__name__)
-        CORS(self.app)
+        self.app = FastAPI()
+        self.app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
         self.system_name: Optional[str] = None
         self.address: Optional[str] = None
         self.port: Optional[int] = None
         self.client: Optional[ArrowheadClient] = None
-        self.server_thread: Optional[Thread] = None
         self.ssl_context: Optional[ssl.SSLContext] = None
+        self.ssl_keyfile: Optional[str] = None
+        self.ssl_certfile: Optional[str] = None
+        self.ssl_truststore: Optional[str] = None
 
         # Configure logging
         verbose = os.getenv("ARROWHEAD_VERBOSE", "false").lower()
@@ -43,7 +49,6 @@ class Framework:
             logging.basicConfig(level=logging.DEBUG)
         elif verbose in ("false", "0"):
             logging.basicConfig(level=logging.WARNING)
-            self.app.logger.setLevel(logging.WARNING)
 
     @classmethod
     def create_framework(cls) -> "Framework":
@@ -51,6 +56,7 @@ class Framework:
         framework = cls()
 
         # Load configuration from environment
+        from .rpc.config import Config
         config = Config(
             tls=os.getenv("ARROWHEAD_TLS", "true").lower() in ("true", "1"),
             authorization_host=os.getenv("ARROWHEAD_AUTHORIZATION_HOST", "c1-authorization"),
@@ -88,8 +94,7 @@ class Framework:
     def _setup_tls(
         self, keystore_path: str, password: Optional[str], truststore_path: str
     ) -> None:
-        """Setup TLS configuration for the Flask server."""
-        # Load client certificate from PKCS#12
+        """Setup TLS configuration for the Uvicorn server."""
         with open(keystore_path, "rb") as f:
             p12_data = f.read()
 
@@ -97,44 +102,33 @@ class Framework:
             p12_data, password.encode() if password else None
         )
 
-        # Ensure we have valid key and certificate
         if private_key is None or cert is None:
             raise ValueError("Failed to load private key or certificate from keystore")
 
-        # Create cert chain
         cert_chain = [cert]
         if additional_certs:
             cert_chain.extend(additional_certs)
 
-        # Use secure temporary directory for SSL files
         self._temp_dir = tempfile.TemporaryDirectory()
         temp_dir_path = self._temp_dir.name
         
         from pathlib import Path
-        cert_path = Path(temp_dir_path) / "cert.pem" 
-        key_path = Path(temp_dir_path) / "key.pem"
+        self.ssl_certfile = str(Path(temp_dir_path) / "cert.pem")
+        self.ssl_keyfile = str(Path(temp_dir_path) / "key.pem")
+        self.ssl_truststore = truststore_path
 
-        # Write cert file
-        with open(cert_path, "wb") as cert_file:
+        with open(self.ssl_certfile, "wb") as cert_file:
             for certificate in cert_chain:
                 cert_file.write(certificate.public_bytes(serialization.Encoding.PEM))
 
-        # Write key file securely with restricted permissions
         key_bytes = private_key.private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.PKCS8,
             encryption_algorithm=serialization.NoEncryption(),
         )
-        key_fd = os.open(key_path, os.O_WRONLY | os.O_CREAT, 0o600)
+        key_fd = os.open(self.ssl_keyfile, os.O_WRONLY | os.O_CREAT, 0o600)
         with os.fdopen(key_fd, "wb") as key_file:
             key_file.write(key_bytes)
-
-        # Create SSL context
-        self.ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        self.ssl_context.load_cert_chain(str(cert_path), str(key_path))
-
-        # Load CA certificates
-        self.ssl_context.load_verify_locations(truststore_path)
 
     def handle_service(
         self,
@@ -146,71 +140,40 @@ class Framework:
         """Register a service handler with the framework."""
         logger.debug(f"Registering service: {service_definition} at {service_uri}")
 
-        # Create a unique function name for Flask endpoint
-        safe_name = service_definition.replace("-", "_").replace("/", "_")
-        endpoint_name = f"service_handler_{safe_name}_{id(service)}"
-
-        def service_handler():
-            """Flask route handler for the service."""
+        async def service_handler(request: Request):
+            """FastAPI route handler for the service."""
             try:
-                # Extract query parameters (excluding token)
-                query_params = {}
-                token = None
-                for key, value in request.args.items():
-                    if key == "token":
-                        token = value
-                        # TODO: Verify token
-                    else:
-                        query_params[key] = value
+                query_params = dict(request.query_params)
+                if "token" in query_params:
+                    # TODO: Verify token
+                    del query_params["token"]
 
-                # Get request payload
-                payload = request.get_data() if request.data else None
+                payload = await request.body()
+                params = Params(query_params=query_params, payload=payload if payload else None)
+                
+                # Await the async handler
+                response_data = await service.handle_request(params)
 
-                # Create parameters object
-                params = Params(query_params=query_params, payload=payload)
-
-                # Call service handler
-                response_data = service.handle_request(params)
-
-                # Return response
-                if isinstance(response_data, bytes):
-                    return response_data.decode("utf-8")
-                return str(response_data)
+                return Response(content=response_data, media_type="application/json")
 
             except Exception as e:
-                logger.error(f"Service handler error: {e}")
-                return jsonify({"error": str(e)}), 400
+                logger.error(f"Service handler error: {e}", exc_info=True)
+                return Response(content=f'{{"error": "{str(e)}"}}', status_code=500, media_type="application/json")
 
-        # Set a unique function name for Flask
-        service_handler.__name__ = endpoint_name
+        self.app.add_api_route(
+            path=service_uri,
+            endpoint=service_handler,
+            methods=[str(http_method)]
+        )
 
-        # Register with Flask based on HTTP method
-        if http_method == HTTPMethod.GET:
-            self.app.route(service_uri, methods=["GET"], endpoint=endpoint_name)(
-                service_handler
-            )
-        elif http_method == HTTPMethod.POST:
-            self.app.route(service_uri, methods=["POST"], endpoint=endpoint_name)(
-                service_handler
-            )
-        elif http_method == HTTPMethod.PUT:
-            self.app.route(service_uri, methods=["PUT"], endpoint=endpoint_name)(
-                service_handler
-            )
-        elif http_method == HTTPMethod.DELETE:
-            self.app.route(service_uri, methods=["DELETE"], endpoint=endpoint_name)(
-                service_handler
-            )
-
-    def send_request(self, service_def: str, params: Optional[Params] = None) -> bytes:
-        """Send a request to a service via orchestration."""
+    async def send_request(self, service_def: str, params: Optional[Params] = None) -> bytes:
+        """Send a request to a service via orchestration (asynchronously)."""
         if not self.client:
             raise RuntimeError("Client not initialized")
 
         if params is None:
             params = Params.empty()
 
-        # Build orchestration request
         orchestration_request = build_orchestration_request(
             self.system_name or "unknown",
             self.address or "localhost",
@@ -218,60 +181,60 @@ class Framework:
             service_def,
         )
 
-        # Orchestrate
-        orchestration_response = self.client.orchestrate(orchestration_request)
+        orchestration_response = await self.client.orchestrate(orchestration_request)
 
         if not orchestration_response.response:
-            raise RuntimeError(f"Failed to send request to service: {service_def}")
+            raise RuntimeError(f"No providers found for service: {service_def}")
 
-        # Send request to the first matched service
         matched_service = orchestration_response.response[0]
-        return self.client.send_request(
+        # Use the async version of send_request
+        return await self.client.send_request(
             matched_service, params.query_params, params.payload
         )
 
     def serve_forever(self) -> None:
-        """Start the Flask server and block."""
+        """Start the Uvicorn server and block."""
         host = self.address or "0.0.0.0"
         port = self.port or 8080
 
-        if self.ssl_context:
-            logger.info(f"Starting HTTPS server on {host}:{port}")
-            self.app.run(
-                host=host,
-                port=port,
-                ssl_context=self.ssl_context,
-                debug=False,
-                threaded=True,
-            )
+        uvicorn_config = uvicorn.Config(
+            self.app, 
+            host=host, 
+            port=port,
+            log_level="info",
+        )
+
+        if self.ssl_keyfile and self.ssl_certfile and self.ssl_truststore:
+            logger.info(f"Starting HTTPS server with mTLS on {host}:{port}")
+            uvicorn_config.ssl_keyfile = self.ssl_keyfile
+            uvicorn_config.ssl_certfile = self.ssl_certfile
+            
+            # Use the truststore to verify client certificates
+            uvicorn_config.ssl_ca_certs = self.ssl_truststore
+            
+            # Enforce that clients MUST present a valid certificate
+            uvicorn_config.ssl_cert_reqs = ssl.CERT_REQUIRED
         else:
             logger.info(f"Starting HTTP server on {host}:{port}")
-            self.app.run(host=host, port=port, debug=False, threaded=True)
+
+        server = uvicorn.Server(uvicorn_config)
+        server.run()
 
     def start_server(self) -> None:
-        """Start the Flask server in a background thread."""
-        if self.server_thread and self.server_thread.is_alive():
-            logger.warning("Server is already running")
-            return
+        """Uvicorn manages its own event loop and workers. 
+        Directly calling serve_forever is the standard way.
+        Running in a background thread is not the typical async pattern,
+        but can be kept for compatibility if needed.
+        """
+        self.serve_forever()
 
-        self.server_thread = Thread(target=self.serve_forever, daemon=True)
-        self.server_thread.start()
-        logger.info("Server started in background thread")
-
-    def stop_server(self) -> None:
-        """Stop the Flask server."""
-        # Flask doesn't have a built-in way to stop gracefully
-        # This would require additional implementation with werkzeug
-        logger.warning("Server stop not implemented - use Ctrl+C to stop")
-
-    def close(self) -> None:
-        """Clean up resources."""
+    async def aclose(self) -> None: # <--- New async close method
+        """Clean up resources asynchronously."""
         if self.client:
-            self.client.close()
+            await self.client.aclose()
 
-        # Clean up temporary SSL directory
         if hasattr(self, "_temp_dir"):
             try:
                 self._temp_dir.cleanup()
-            except:
-                pass
+            except Exception as e:
+                logger.warning(f"Failed to cleanup temp dir: {e}")
