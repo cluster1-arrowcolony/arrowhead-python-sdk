@@ -22,7 +22,7 @@ class Service(ABC):
     """Abstract base class for Arrowhead services."""
 
     @abstractmethod
-    def handle_request(self, params: Params) -> bytes:
+    async def handle_request(self, params: Params) -> bytes:
         """Handle incoming service request.
 
         Args:

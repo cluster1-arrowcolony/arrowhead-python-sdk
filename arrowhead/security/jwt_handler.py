@@ -1,6 +1,5 @@
 """JWT handling for the Arrowhead Framework."""
 
-import json
 from typing import Any, Dict
 
 import jwt

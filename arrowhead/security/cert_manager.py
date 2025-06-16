@@ -6,7 +6,6 @@ import shutil
 import subprocess
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +83,9 @@ class OpenSSLCertManager(CertManager):
 
         if os.path.exists(system_keystore):
             raise RuntimeError(f"System keystore {system_keystore} already exists")
+
+        ext_file = None
+        chain_file = None
 
         try:
             # 1. Generate the system RSA private key

@@ -1,9 +1,11 @@
 """Main RPC client for Arrowhead Framework."""
 
 import logging
+import os
+import tempfile
 from typing import Dict, Optional
 
-import requests
+import httpx
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.serialization import pkcs12
 
@@ -11,14 +13,10 @@ from ..core.models import (
     MatchedService,
     OrchestrationRequest,
     OrchestrationResponse,
-    ProviderSystem,
-    Service,
-    ServiceRegistrationRequest,
-    System,
-    SystemRegistration,
 )
-from .config import Config, HTTPMethod
+from .config import Config
 from .management import ManagementAPI
+
 
 logger = logging.getLogger(__name__)
 
@@ -29,281 +27,156 @@ class ArrowheadClient:
     def __init__(self, config: Config) -> None:
         """Initialize the client with configuration."""
         self.config = config
-        self.session = self._create_http_session()
+        self._temp_files = []
+        self.client = self._create_async_http_client()
         self.management = ManagementAPI(self)
 
-    def _create_http_session(self) -> requests.Session:
-        """Create HTTP session with TLS configuration."""
-        session = requests.Session()
+    def _create_async_http_client(self) -> httpx.AsyncClient:
+        """Create an async HTTP client with TLS configuration."""
+        if not self.config.tls:
+            logger.debug("TLS disabled. Creating insecure httpx client.")
+            return httpx.AsyncClient(verify=False)
 
-        if self.config.tls:
-            logger.debug(
-                f"TLS enabled. Keystore: {self.config.keystore_path}, Truststore: {self.config.truststore_path}"
-            )
+        if not (self.config.keystore_path and self.config.truststore_path):
+            raise ValueError("Keystore and truststore paths are required for TLS.")
 
-            if self.config.keystore_path and self.config.truststore_path:
-                # Load client certificate from PKCS#12
-                with open(self.config.keystore_path, "rb") as f:
-                    p12_data = f.read()
+        logger.debug(
+            f"TLS enabled. Keystore: {self.config.keystore_path}, Truststore: {self.config.truststore_path}"
+        )
 
-                private_key, cert, additional_certs = pkcs12.load_key_and_certificates(
-                    p12_data,
-                    self.config.password.encode() if self.config.password else None,
+        with open(self.config.keystore_path, "rb") as f:
+            p12_data = f.read()
+
+        private_key, cert, additional_certs = pkcs12.load_key_and_certificates(
+            p12_data, self.config.password.encode() if self.config.password else None
+        )
+
+        if private_key is None or cert is None:
+            raise ValueError("Failed to load private key or certificate from keystore")
+
+        cert_chain = [cert]
+        if additional_certs:
+            cert_chain.extend(additional_certs)
+
+        with tempfile.NamedTemporaryFile(mode="wb", delete=False, suffix=".pem") as cert_file:
+            for certificate in cert_chain:
+                cert_file.write(certificate.public_bytes(serialization.Encoding.PEM))
+            cert_path = cert_file.name
+            self._temp_files.append(cert_path)
+
+        with tempfile.NamedTemporaryFile(mode="wb", delete=False, suffix=".key") as key_file:
+            key_file.write(
+                private_key.private_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PrivateFormat.PKCS8,
+                    encryption_algorithm=serialization.NoEncryption(),
                 )
+            )
+            key_path = key_file.name
+            self._temp_files.append(key_path)
 
-                # Ensure we have valid key and certificate
-                if private_key is None or cert is None:
-                    raise ValueError(
-                        "Failed to load private key or certificate from keystore"
-                    )
+        certs = (cert_path, key_path)
+        verify = self.config.truststore_path if self.config.verify_ssl else False
 
-                # Create cert chain
-                cert_chain = [cert]
-                if additional_certs:
-                    cert_chain.extend(additional_certs)
+        return httpx.AsyncClient(cert=certs, verify=verify)
 
-                # Save to temporary files for requests
-                import os
-                import tempfile
-
-                with tempfile.NamedTemporaryFile(
-                    mode="wb", delete=False, suffix=".pem"
-                ) as cert_file:
-                    for certificate in cert_chain:
-                        cert_file.write(
-                            certificate.public_bytes(serialization.Encoding.PEM)
-                        )
-                    cert_path = cert_file.name
-
-                with tempfile.NamedTemporaryFile(
-                    mode="wb", delete=False, suffix=".key"
-                ) as key_file:
-                    key_file.write(
-                        private_key.private_bytes(
-                            encoding=serialization.Encoding.PEM,
-                            format=serialization.PrivateFormat.PKCS8,
-                            encryption_algorithm=serialization.NoEncryption(),
-                        )
-                    )
-                    key_path = key_file.name
-
-                session.cert = (cert_path, key_path)
-
-                # Setup certificate verification - requests library handles PEM files directly
-                if self.config.verify_ssl:
-                    session.verify = self.config.truststore_path
-                    logger.debug(f"CA certificate bundle: {self.config.truststore_path}")
-                else:
-                    session.verify = False
-                    logger.warning(
-                        "SSL certificate verification is DISABLED - this should only be used in development"
-                    )
-
-                # Log certificate setup
-                logger.debug(f"Client certificate: {cert_path}")
-
-                # Clean up temp files when session is closed
-                def cleanup():
-                    try:
-                        os.unlink(cert_path)
-                        os.unlink(key_path)
-                    except:
-                        pass
-
-                session._cleanup = cleanup  # type: ignore
-        else:
-            logger.debug("TLS disabled")
-            session.verify = False
-
-        return session
-
-    def _build_service_registry_url(self, path: str) -> str:
-        """Build URL for service registry API."""
+    def _build_url(self, service: str, path: str) -> str:
+        """Build URL for a core service API."""
         protocol = "https" if self.config.tls else "http"
-        return f"{protocol}://{self.config.service_registry_host}:{self.config.service_registry_port}/serviceregistry{path}"
+        if service == "serviceregistry":
+            return f"{protocol}://{self.config.service_registry_host}:{self.config.service_registry_port}/serviceregistry{path}"
+        elif service == "orchestrator":
+            return f"{protocol}://{self.config.orchestrator_host}:{self.config.orchestrator_port}/orchestrator{path}"
+        elif service == "authorization":
+            return f"{protocol}://{self.config.authorization_host}:{self.config.authorization_port}/authorization{path}"
+        raise ValueError(f"Unknown core service: {service}")
 
-    def _build_orchestrator_url(self, path: str) -> str:
-        """Build URL for orchestrator API."""
-        protocol = "https" if self.config.tls else "http"
-        return f"{protocol}://{self.config.orchestrator_host}:{self.config.orchestrator_port}/orchestrator{path}"
-
-    def _build_authorization_url(self, path: str) -> str:
-        """Build URL for authorization API."""
-        protocol = "https" if self.config.tls else "http"
-        return f"{protocol}://{self.config.authorization_host}:{self.config.authorization_port}/authorization{path}"
-
-    def _make_request(
+    async def _make_request(
         self,
         method: str,
         url: str,
         expected_status: int = 200,
         error_msg: str = "Request failed",
         **kwargs,
-    ) -> requests.Response:
-        """Make HTTP request with error handling."""
+    ) -> httpx.Response:
+        """Make an async HTTP request with error handling."""
         try:
-            response = self.session.request(method, url, **kwargs)
-
+            response = await self.client.request(method, url, **kwargs)
             if response.status_code != expected_status:
                 logger.error(f"{error_msg}: {response.status_code} - {response.text}")
                 response.raise_for_status()
-
             return response
-        except requests.RequestException as e:
+        except httpx.RequestError as e:
             logger.error(f"{error_msg}: {e}")
             raise
 
-    def register_system(self, system_reg: SystemRegistration) -> System:
-        """Register a system with the service registry."""
-        url = self._build_service_registry_url("/register-system")
-        data = system_reg.model_dump(by_alias=True)
-
-        response = self._make_request(
-            "POST",
-            url,
-            expected_status=201,
-            error_msg="Failed to register system",
-            json=data,
-            headers={"Content-Type": "application/json", "Accept": "application/json"},
-        )
-
-        return System(**response.json())
-
-    def unregister_system(self, system: System) -> None:
-        """Unregister a system from the service registry."""
-        url = self._build_service_registry_url(
-            f"/unregister-system?address={system.address}&port={system.port}&system_name={system.system_name}"
-        )
-
-        self._make_request(
-            "DELETE",
-            url,
-            error_msg="Failed to unregister system",
-            headers={"Content-Type": "application/json", "Accept": "application/json"},
-        )
-
-    def register_service(
-        self,
-        system: System,
-        http_method: HTTPMethod,
-        service_definition: str,
-        service_uri: str,
-    ) -> Service:
-        """Register a service with the service registry."""
-        service_reg = ServiceRegistrationRequest(
-            endOfValidity="",
-            interfaces=["HTTP-SECURE-JSON"],
-            metadata={"http-method": str(http_method)},
-            providerSystem=ProviderSystem(
-                systemName=system.system_name,
-                address=system.address,
-                port=system.port,
-                authenticationInfo=system.authentication_info or "",
-            ),
-            secure="TOKEN",
-            serviceDefinition=service_definition,
-            serviceUri=service_uri,
-            version="1",
-        )
-
-        url = self._build_service_registry_url("/register")
-        data = service_reg.model_dump(by_alias=True)
-
-        response = self._make_request(
-            "POST",
-            url,
-            expected_status=201,
-            error_msg="Failed to register service",
-            json=data,
-            headers={"Content-Type": "application/json", "Accept": "application/json"},
-        )
-
-        return Service(**response.json())
-
-    def unregister_service(
-        self,
-        system_name: str,
-        service_uri: str,
-        service_definition: str,
-        address: str,
-        port: int,
-    ) -> None:
-        """Unregister a service from the service registry."""
-        url = self._build_service_registry_url(
-            f"/unregister?system_name={system_name}&service_uri={service_uri}"
-            f"&service_definition={service_definition}&address={address}&port={port}"
-        )
-
-        self._make_request(
-            "DELETE",
-            url,
-            error_msg="Failed to unregister service",
-            headers={"Content-Type": "application/json", "Accept": "application/json"},
-        )
-
-    def orchestrate(
+    async def orchestrate(
         self, orchestration_req: OrchestrationRequest
     ) -> OrchestrationResponse:
         """Request service orchestration."""
-        url = self._build_orchestrator_url("/orchestration")
+        url = self._build_url("orchestrator", "/orchestration")
         data = orchestration_req.model_dump(by_alias=True)
 
-        response = self._make_request(
+        response = await self._make_request(
             "POST",
             url,
             error_msg="Failed to orchestrate",
             json=data,
             headers={"Content-Type": "application/json", "Accept": "application/json"},
         )
-
         return OrchestrationResponse(**response.json())
 
-    def send_request(
+    async def send_request(
         self,
         matched_service: MatchedService,
         query_params: Optional[Dict[str, str]] = None,
         payload: Optional[bytes] = None,
     ) -> bytes:
-        """Send request to a matched service."""
+        """Send an async request to a matched service."""
         address = matched_service.provider.address
         port = matched_service.provider.port
-
         token = matched_service.authorization_tokens.get("HTTP-SECURE-JSON")
         if not token:
             raise ValueError("No authorization token found")
 
         protocol = "https" if self.config.tls else "http"
-        url = (
-            f"{protocol}://{address}:{port}{matched_service.service_uri}?token={token}"
-        )
-
-        # Add query parameters
-        if query_params:
-            params = "&".join([f"{k}={v}" for k, v in query_params.items()])
-            url += f"&{params}"
-
+        base_url = f"{protocol}://{address}:{port}"
+        
+        request_params = query_params.copy() if query_params else {}
+        request_params["token"] = token
+        
         method = matched_service.metadata.get("http-method")
         if not method:
             raise ValueError("No HTTP method found in service metadata")
 
-        logger.debug(f"Sending {method} request to {url}")
-
-        response = self._make_request(
+        logger.debug(f"Sending async {method} request to {base_url}{matched_service.service_uri}")
+        
+        response = await self._make_request(
             method,
-            url,
+            f"{base_url}{matched_service.service_uri}",
             error_msg="Failed to send service request",
-            data=payload,
+            params=request_params,
+            content=payload,
             headers={"Content-Type": "application/json", "Accept": "application/json"},
         )
-
         return response.content
 
-    def close(self) -> None:
-        """Close the client and clean up resources."""
-        if hasattr(self.session, "_cleanup"):
-            self.session._cleanup()  # type: ignore
-        self.session.close()
-
-
-# Re-export Config and HTTPMethod for convenience
-from .config import Config, HTTPMethod
+    async def aclose(self) -> None:
+        """Asynchronously close the client and clean up resources."""
+        await self.client.aclose()
+        for temp_file in self._temp_files:
+            try:
+                os.unlink(temp_file)
+            except OSError:
+                pass
+        self._temp_files.clear()
+        
+    # Implement async context manager protocol
+    async def __aenter__(self) -> "ArrowheadClient":
+        return self
+        
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        del exc_type
+        del exc_val
+        del exc_tb
+        await self.aclose()
