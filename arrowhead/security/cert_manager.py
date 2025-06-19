@@ -93,15 +93,16 @@ class OpenSSLCertManager(CertManager):
             self._run_openssl_command("genrsa", "-out", system_key_file, "2048")
 
             # 2. Generate a certificate signing request (CSR) with the desired subject and SAN
-            subj = f"/CN={system_dname}"
-            logger.debug("Generating CSR for system certificate...")
+            # FIX: Use system_dname directly as the subject. It should be in "CN=name" format.
+            subj = f"/{system_dname}"
+            logger.debug(f"Generating CSR for system certificate with subject: {subj}")
             self._run_openssl_command(
                 "req",
                 "-new",
                 "-key",
                 system_key_file,
                 "-subj",
-                subj,
+                subj, # Use the full subject string
                 "-addext",
                 f"subjectAltName={san}",
                 "-out",
@@ -389,7 +390,7 @@ class KeytoolCertManager(CertManager):
                 "-keypass",
                 password,
                 "-dname",
-                f"CN={system_dname}",
+                system_dname,
                 "-ext",
                 f"SubjectAlternativeName={san}",
                 "-noprompt",

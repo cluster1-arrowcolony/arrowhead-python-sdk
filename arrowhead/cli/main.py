@@ -282,7 +282,10 @@ def register_system(name: str, address: str, port: int) -> None:
             sys.exit(1)
 
         system_keystore = f"{name}.p12"
-        system_dname = f"{name}.{cloud_alias}"
+        # FIX: The Distinguished Name (DN) for the certificate's subject
+        # should match the system name exactly for mTLS authentication.
+        # We will use the simple system name for the Common Name (CN).
+        system_dname = f"CN={name}"
         san = generate_subject_alternative_name(name)
 
         # Check if system keystore already exists
@@ -717,7 +720,10 @@ def generate_certificate(
             sys.exit(1)
 
         system_keystore = f"{name}.p12"
-        system_dname = f"{name}.{cloud_alias}"
+        # FIX: The Distinguished Name (DN) for the certificate's subject
+        # should match the system name exactly for mTLS authentication.
+        # We will use the simple system name for the Common Name (CN).
+        system_dname = f"CN={name}"
         san = generate_subject_alternative_name(name)
 
         # Check if system keystore already exists

@@ -78,6 +78,9 @@ class ArrowheadClient:
         certs = (cert_path, key_path)
         verify = self.config.truststore_path if self.config.verify_ssl else False
 
+        # CORRECTED FIX: Pass 'verify' (which is the truststore path) to the AsyncClient.
+        # httpx is smart enough to use this for verification, and passing the certs
+        # tuple provides the client certificate for mTLS.
         return httpx.AsyncClient(cert=certs, verify=verify)
 
     def _build_url(self, service: str, path: str) -> str:
@@ -101,11 +104,21 @@ class ArrowheadClient:
     ) -> httpx.Response:
         """Make an async HTTP request with error handling."""
         try:
-            response = await self.client.request(method, url, **kwargs)
+            # We must set a timeout, otherwise requests can hang indefinitely.
+            response = await self.client.request(method, url, timeout=10.0, **kwargs)
             if response.status_code != expected_status:
                 logger.error(f"{error_msg}: {response.status_code} - {response.text}")
+                # Try to parse and log a more specific error from the body if possible
+                try:
+                    error_json = response.json()
+                    logger.error(f"Server error details: {error_json}")
+                except Exception:
+                    pass
                 response.raise_for_status()
             return response
+        except httpx.ConnectError as e:
+            logger.error(f"Connection to {e.request.url} failed. Is the server running and accessible?")
+            raise
         except httpx.RequestError as e:
             logger.error(f"{error_msg}: {e}")
             raise
