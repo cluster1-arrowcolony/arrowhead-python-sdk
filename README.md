@@ -1,23 +1,6 @@
-Of course. Updating the `arrowhead-python-sdk` documentation to reflect its new, modern `async` API is a crucial step. It improves correctness, performance, and developer experience.
-
-Here is the fully updated `README.md` for `arrowhead-python-sdk`. I've rewritten the tutorial and examples to be fully asynchronous, using modern `async/await` syntax.
-
-### Key Changes in the README:
-
-*   **Asynchronous Main Functions:** All example code now uses `async def main():` and is run with `asyncio.run(main())`.
-*   **`async/await` Keywords:** All framework calls (`send_request`, `start`) are now properly awaited.
-*   **Provider `start()` and `stop()`:** The `start()` method is now `async`, and the `stop()` method is also `async` to handle the graceful shutdown of the async server.
-*   **Consumer `Framework` Usage:** The consumer example now correctly uses an `async with` block for the `Framework` instance, ensuring resources are cleaned up properly.
-*   **Clarity and Simplicity:** The examples are refined to be as clear and idiomatic as possible for an async Python developer.
-
----
-
-### Updated `dev/arrowhead-python-sdk/README.md`
-
-```markdown
 # Python SDK for the Arrowhead Framework
 
-This is a modern, asynchronous Python SDK and CLI tool for the [Arrowhead Framework](https://arrowhead.eu), an Industrial IoT platform for service-oriented architecture. It provides a command-line interface for management and a high-level SDK for developing performant, `async`-native Arrowhead applications.
+This is an asynchronous Python SDK and CLI tool for the [Arrowhead Framework](https://arrowhead.eu), an Industrial IoT platform for service-oriented architecture. It provides a command-line interface for management and a high-level SDK for developing performant, `async`-native Arrowhead applications.
 
 ## Features
 
@@ -212,7 +195,7 @@ Navigate to the `carconsumer` directory and create `consumer.py`. This example u
 import asyncio
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 from arrowhead import Framework, Params
 
@@ -328,6 +311,3 @@ isort .
 flake8
 mypy .
 ```
-
-## License
-MIT License - see LICENSE file for details.
