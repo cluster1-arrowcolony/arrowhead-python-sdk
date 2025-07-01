@@ -110,7 +110,6 @@ class ManagementAPI:
             version="1",
         )
 
-        # FIX: The endpoint for registering a service via management is /mgmt/services, not /mgmt.
         url = self.client._build_url("serviceregistry", "/mgmt/services")
         data = service_reg.model_dump(by_alias=True)
 
@@ -126,7 +125,6 @@ class ManagementAPI:
 
     async def unregister_service(self, service_id: int) -> None:
         """Unregister service by ID."""
-        # FIX: The endpoint for unregistering a service is also more specific.
         url = self.client._build_url("serviceregistry", f"/mgmt/services/{service_id}")
         await self.client._make_request(
             "DELETE",
@@ -137,7 +135,6 @@ class ManagementAPI:
 
     async def get_services(self) -> List[Service]:
         """Get all registered services."""
-        # FIX: The endpoint for listing services is also more specific.
         url = self.client._build_url("serviceregistry", "/mgmt/services?direction=ASC&sort_field=id")
         response = await self.client._make_request(
             "GET", url, error_msg="Failed to get services", headers={"Accept": "*/*"}
@@ -147,7 +144,6 @@ class ManagementAPI:
 
     async def get_service_by_id(self, service_id: int) -> Service:
         """Get service by ID."""
-        # FIX: The endpoint for getting a service is also more specific.
         url = self.client._build_url("serviceregistry", f"/mgmt/services/{service_id}")
         response = await self.client._make_request(
             "GET", url, error_msg="Failed to get service", headers={"Accept": "*/*"}

@@ -78,9 +78,6 @@ class ArrowheadClient:
         certs = (cert_path, key_path)
         verify = self.config.truststore_path if self.config.verify_ssl else False
 
-        # CORRECTED FIX: Pass 'verify' (which is the truststore path) to the AsyncClient.
-        # httpx is smart enough to use this for verification, and passing the certs
-        # tuple provides the client certificate for mTLS.
         return httpx.AsyncClient(cert=certs, verify=verify)
 
     def _build_url(self, service: str, path: str) -> str:
