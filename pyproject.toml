@@ -9,7 +9,7 @@ description = "Python SDK and CLI for the Arrowhead Framework"
 readme = "README.md"
 requires-python = ">=3.8"
 authors = [
-    {name = "Arrowhead Framework", email = "info@arrowhead.eu"}
+    {name = "Klas Segeljakt", email = "klas.segeljakt@ri.se"}
 ]
 keywords = ["arrowhead", "iot", "industrial", "framework", "soa"]
 classifiers = [
@@ -31,7 +31,7 @@ dependencies = [
     "click>=8.0.0",
     "fastapi>=0.95.0",
     "uvicorn[standard]>=0.20.0",
-    "httpx>=0.23.0",
+    "httpx[http2]>=0.23.0",
     "pydantic>=2.0.0",
     "python-dateutil>=2.8.0",
     "rich>=12.0.0",
@@ -53,9 +53,9 @@ dev = [
 arrowhead = "arrowhead.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/johankristianss/arrowhead"
-Repository = "https://github.com/johankristianss/arrowhead"
-Documentation = "https://arrowhead.eu"
+Homepage = "https://github.com/cluster1-arrowcolony/arrowhead-python-sdk"
+Repository = "https://github.com/cluster1-arrowcolony/arrowhead-python-sdk"
+Documentation = "https://github.com/cluster1-arrowcolony/arrowhead-python-sdk"
 
 
 [tool.black]

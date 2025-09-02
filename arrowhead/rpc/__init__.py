@@ -1,12 +1,11 @@
 """RPC client for communicating with Arrowhead core services."""
 
-from .client import ArrowheadClient, Config
+from .client import Client
+from .config import Config
 from .management import ManagementAPI
-from .utils import build_orchestration_request
 
 __all__ = [
-    "ArrowheadClient",
+    "Client",
     "Config",
     "ManagementAPI",
-    "build_orchestration_request",
 ]

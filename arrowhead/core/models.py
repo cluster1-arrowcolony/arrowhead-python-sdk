@@ -13,19 +13,19 @@ class SystemRegistration(BaseModel):
     authentication_info: str = Field(alias="authenticationInfo")
     metadata: Dict[str, str] = {}
     port: int
-    system_name: str = Field(alias="systemName")
+    name: str = Field(alias="systemName")
 
 
 class System(BaseModel):
     """Arrowhead system model."""
 
     id: int
-    system_name: str = Field(alias="systemName")
+    name: str = Field(alias="systemName")
     address: str
     port: int
-    authentication_info: Optional[str] = Field(None, alias="authenticationInfo")
-    created_at: Optional[datetime] = Field(None, alias="createdAt")
-    updated_at: Optional[datetime] = Field(None, alias="updatedAt")
+    authentication_info: Optional[str] = Field(default=None, alias="authenticationInfo")
+    created_at: Optional[datetime] = Field(default=None, alias="createdAt")
+    updated_at: Optional[datetime] = Field(default=None, alias="updatedAt")
     metadata: Optional[Dict[str, str]] = None
 
 
@@ -39,7 +39,7 @@ class SystemsResponse(BaseModel):
 class ProviderSystem(BaseModel):
     """Provider system for service registration."""
 
-    system_name: str = Field(alias="systemName")
+    name: str = Field(alias="systemName")
     address: str
     port: int
     authentication_info: str = Field(alias="authenticationInfo")
@@ -59,7 +59,7 @@ class Provider(BaseModel):
     """Service provider model."""
 
     id: int
-    system_name: str = Field(alias="systemName")
+    name: str = Field(alias="systemName")
     address: str
     port: int
     authentication_info: str = Field(alias="authenticationInfo")
@@ -144,25 +144,25 @@ class AuthorizationsResponse(BaseModel):
 class RequesterSystem(BaseModel):
     """Requester system for orchestration."""
 
-    system_name: str = Field(alias="systemName")
+    name: str = Field(alias="systemName")
     address: str
     port: int
-    authentication_info: Optional[str] = Field(None, alias="authenticationInfo")
+    authentication_info: Optional[str] = Field(default=None, alias="authenticationInfo")
     metadata: Optional[Dict[str, str]] = None
 
 
 class OrchestrationFlags(BaseModel):
     """Orchestration flags."""
 
-    only_preferred: bool = Field(False, alias="onlyPreferred")
-    override_store: bool = Field(False, alias="overrideStore")
-    external_service_request: bool = Field(False, alias="externalServiceRequest")
-    enable_inter_cloud: bool = Field(False, alias="enableInterCloud")
-    enable_qos: bool = Field(False, alias="enableQoS")
-    matchmaking: bool = Field(False, alias="matchmaking")
-    metadata_search: bool = Field(False, alias="metadataSearch")
-    trigger_inter_cloud: bool = Field(False, alias="triggerInterCloud")
-    ping_providers: bool = Field(False, alias="pingProviders")
+    only_preferred: bool = Field(default=False, alias="onlyPreferred")
+    override_store: bool = Field(default=False, alias="overrideStore")
+    external_service_request: bool = Field(default=False, alias="externalServiceRequest")
+    enable_inter_cloud: bool = Field(default=False, alias="enableInterCloud")
+    enable_qos: bool = Field(default=False, alias="enableQoS")
+    matchmaking: bool = Field(default=False, alias="matchmaking")
+    metadata_search: bool = Field(default=False, alias="metadataSearch")
+    trigger_inter_cloud: bool = Field(default=False, alias="triggerInterCloud")
+    ping_providers: bool = Field(default=False, alias="pingProviders")
 
 
 class Cloud(BaseModel):
@@ -188,15 +188,13 @@ class RequestedService(BaseModel):
     """Requested service for orchestration."""
 
     interface_requirements: List[str] = Field(alias="interfaceRequirements")
-    max_version_requirement: Optional[int] = Field(None, alias="maxVersionRequirement")
-    metadata_requirements: Dict[str, str] = Field(
-        default_factory=dict, alias="metadataRequirements"
-    )
-    min_version_requirement: Optional[int] = Field(None, alias="minVersionRequirement")
-    ping_providers: bool = Field(False, alias="pingProviders")
+    max_version_requirement: Optional[int] = Field(default=None, alias="maxVersionRequirement")
+    metadata_requirements: Dict[str, str] = Field(default_factory=dict, alias="metadataRequirements")
+    min_version_requirement: Optional[int] = Field(default=None, alias="minVersionRequirement")
+    ping_providers: bool = Field(default=False, alias="pingProviders")
     security_requirements: List[str] = Field(alias="securityRequirements")
     service_definition_requirement: str = Field(alias="serviceDefinitionRequirement")
-    version_requirement: Optional[int] = Field(None, alias="versionRequirement")
+    version_requirement: Optional[int] = Field(default=None, alias="versionRequirement")
 
 
 class OrchestrationRequest(BaseModel):
@@ -204,15 +202,40 @@ class OrchestrationRequest(BaseModel):
 
     commands: Dict[str, str] = {}
     orchestration_flags: OrchestrationFlags = Field(alias="orchestrationFlags")
-    preferred_providers: List[PreferredProvider] = Field(
-        default_factory=list, alias="preferredProviders"
-    )
-    qos_requirements: Dict[str, str] = Field(
-        default_factory=dict, alias="qosRequirements"
-    )
+    preferred_providers: List[PreferredProvider] = Field(default_factory=list, alias="preferredProviders")
+    qos_requirements: Dict[str, str] = Field(default_factory=dict, alias="qosRequirements")
     requested_service: RequestedService = Field(alias="requestedService")
     requester_cloud: Optional[Cloud] = Field(None, alias="requesterCloud")
     requester_system: RequesterSystem = Field(alias="requesterSystem")
+
+    def __init__(
+        self,
+        system_name: str,
+        address: str,
+        port: int,
+        service_definition: str,
+        interface_requirements: List[str] = ["HTTP-SECURE-JSON"],
+        security_requirements: List[str] = ["TOKEN"],
+        metadata_requirements: Dict[str, str] = {},
+        preferred_providers: List[PreferredProvider] = [],
+        orchestration_flags: OrchestrationFlags = OrchestrationFlags(matchmaking=True, overrideStore=True)
+    ):
+        """Build an orchestration request."""
+
+        super().__init__(
+            commands={},
+            orchestrationFlags=orchestration_flags,
+            preferredProviders=preferred_providers,
+            qosRequirements={},
+            requestedService=RequestedService(
+                interfaceRequirements=interface_requirements,
+                securityRequirements=security_requirements,
+                serviceDefinitionRequirement=service_definition,
+                metadataRequirements=metadata_requirements,
+            ),
+            requesterCloud=None,
+            requesterSystem=RequesterSystem(systemName=system_name, address=address, port=port)
+        )
 
 
 class MatchedService(BaseModel):
@@ -225,13 +248,11 @@ class MatchedService(BaseModel):
     metadata: Dict[str, str] = {}
     interfaces: List[Interface]
     version: int
-    authorization_tokens: Dict[str, str] = Field(
-        default_factory=dict, alias="authorizationTokens"
-    )
+    authorization_tokens: Dict[str, str] = Field(default_factory=dict, alias="authorizationTokens")
     warnings: List[str] = []
 
 
 class OrchestrationResponse(BaseModel):
     """Orchestration response model."""
 
-    response: List[MatchedService]
+    matches: List[MatchedService] = Field(alias="response")
