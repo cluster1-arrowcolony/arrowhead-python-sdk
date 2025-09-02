@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
 name = "arrowhead"
@@ -57,9 +57,6 @@ Homepage = "https://github.com/johankristianss/arrowhead"
 Repository = "https://github.com/johankristianss/arrowhead"
 Documentation = "https://arrowhead.eu"
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["arrowhead*"]
 
 [tool.black]
 line-length = 88
