@@ -2,10 +2,34 @@
 
 from .client import Client
 from .config import Config
-from .management import ManagementAPI
+from .model import (
+    Interface,
+    OrchestrationRequest,
+    OrchestrationResponse,
+    Provider,
+    ProviderSystem,
+    Service,
+    ServiceDefinition,
+    ServiceRegistrationRequest,
+    ServicesResponse,
+    System,
+    SystemRegistration,
+    SystemsResponse,
+)
 
 __all__ = [
     "Client",
     "Config",
-    "ManagementAPI",
+    "System",
+    "SystemRegistration",
+    "SystemsResponse",
+    "Service",
+    "ServiceDefinition",
+    "ServiceRegistrationRequest",
+    "ServicesResponse",
+    "Provider",
+    "ProviderSystem",
+    "Interface",
+    "OrchestrationRequest",
+    "OrchestrationResponse",
 ]

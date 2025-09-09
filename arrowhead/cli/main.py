@@ -13,38 +13,18 @@ from rich import print as rprint
 from rich.console import Console
 from rich.table import Table
 
-from ..core.models import SystemRegistration, OrchestrationRequest
+from arrowhead.security.cert_manager import CertManager
+
+from ..rpc.model import AddAuthorizationRequest, ProviderSystem, ServiceRegistrationRequest, SystemRegistration, OrchestrationRequest
 from ..rpc.client import Client
 from ..rpc.config import Config
-from ..security.cert_manager import generate_subject_alternative_name, load_cert_manager
 
 console = Console()
 logger = logging.getLogger(__name__)
 
 
 def is_valid_system_name(system_name: str) -> bool:
-    """
-    Validate system name - should only contain letters and numbers and not be empty.
-
-    Args:
-        system_name: The system name to validate
-
-    Returns:
-        True if valid, False otherwise
-    """
-    if not system_name:
-        return False
-
-    # Only letters and numbers allowed
-    return bool(re.match(r"^[a-zA-Z0-9]+$", system_name))
-
-
-def setup_logging(verbose: bool = False) -> None:
-    """Setup logging configuration."""
-    level = logging.DEBUG if verbose else logging.WARN
-    logging.basicConfig(
-        level=level, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-
+    return len(system_name) > 0 and re.match(r"^[a-zA-Z0-9]+$", system_name) is not None
 
 @click.group()
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose output")
@@ -53,7 +33,9 @@ def cli(ctx: click.Context, verbose: bool) -> None:
     """Python CLI to interact with Arrowhead Core Systems."""
     ctx.ensure_object(dict)
     ctx.obj["verbose"] = verbose
-    setup_logging(verbose)
+    logging.basicConfig(
+        level=logging.DEBUG if verbose else logging.WARN,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
 
 @cli.command()
@@ -64,13 +46,11 @@ def version() -> None:
     table = Table(title="Arrowhead Python CLI")
     table.add_column("Component", style="cyan")
     table.add_column("Version", style="green")
-
     table.add_row("py-arrowhead", __version__)
     table.add_row(
         "Python",
         f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
     )
-
     console.print(table)
 
 
@@ -116,7 +96,7 @@ def list_systems(filter: Optional[str]) -> None:
     async def _main() -> None:
         config = Config.load_from_env(privileged=True)
         async with Client(config) as client:
-            systems_list = await client.management.get_systems()
+            systems_list = await client.get_systems()
 
             if not systems_list:
                 rprint("[yellow]No systems found[/yellow]")
@@ -163,7 +143,7 @@ def get_system(id: int) -> None:
     async def _main() -> None:
         config = Config.load_from_env(privileged=True)
         async with Client(config) as client:
-            system = await client.management.get_system_by_id(id)
+            system = await client.get_system_by_id(id)
 
             table = Table(title=f"System Details - {system.name}")
             table.add_column("Property", style="cyan")
@@ -246,7 +226,6 @@ def register(names: Tuple[str], addresses: Tuple[str], ports: Tuple[int]) -> Non
         cert_results = []
         for name, address, port in parsed_systems:
             try:
-                from ..security.cert_manager import load_cert_manager, generate_subject_alternative_name
 
                 root_keystore = config.root_keystore_path
                 root_alias = config.root_keystore_alias
@@ -266,7 +245,7 @@ def register(names: Tuple[str], addresses: Tuple[str], ports: Tuple[int]) -> Non
                     cert_results.append((name, "existing", None))
                     continue
 
-                cert_manager = load_cert_manager()
+                cert_manager = CertManager()
                 cert_manager.create_system_keystore(
                     root_keystore=root_keystore,
                     root_alias=root_alias,
@@ -275,7 +254,7 @@ def register(names: Tuple[str], addresses: Tuple[str], ports: Tuple[int]) -> Non
                     system_keystore=system_keystore,
                     system_dname=f"CN={name}",
                     system_alias=name,
-                    san=generate_subject_alternative_name(name),
+                    san=CertManager.generate_subject_alternative_name(name),
                     password=password,
                 )
                 auth_info = cert_manager.get_public_key(
@@ -301,8 +280,7 @@ def register(names: Tuple[str], addresses: Tuple[str], ports: Tuple[int]) -> Non
                 address, port = parsed_systems[i][1], parsed_systems[i][2]
                 if auth_info == "existing":
                     # Load auth info from existing certificate
-                    from ..security.cert_manager import load_cert_manager
-                    cert_manager = load_cert_manager()
+                    cert_manager = CertManager()
                     assert config.keystore_password, "Password must be set for existing keystore"
                     auth_info = cert_manager.get_public_key(
                         f"{name}.p12", config.keystore_password)
@@ -323,7 +301,7 @@ def register(names: Tuple[str], addresses: Tuple[str], ports: Tuple[int]) -> Non
                 status_message = f"Batch registering {len(reg_list)} system(s)..."
                 with console.status(status_message):
                     try:
-                        batch_results = await client.management.register_systems_batch(reg_list)
+                        batch_results = await client.register_systems_batch(reg_list)
                         for i, system in enumerate(batch_results):
                             results.append((parsed_systems[i], system, None))
                     except Exception as e:
@@ -370,7 +348,7 @@ def unregister_system(id: int) -> None:
     async def _main() -> None:
         config = Config.load_from_env(privileged=True)
         async with Client(config) as client:
-            await client.management.unregister_system_by_id(id)
+            await client.unregister_system_by_id(id)
             rprint(
                 f"[green]Successfully unregistered system with ID {id}[/green]")
 
@@ -394,7 +372,7 @@ def list_services() -> None:
     async def _main() -> None:
         config = Config.load_from_env(privileged=True)
         async with Client(config) as client:
-            services_list = await client.management.get_services()
+            services_list = await client.get_services()
 
             if not services_list:
                 rprint("[yellow]No services found[/yellow]")
@@ -443,11 +421,9 @@ def register_service(systems: Tuple[str], definitions: Tuple[str], uris: Tuple[s
             rprint("Please provide one of each for every service.")
             sys.exit(1)
 
-        from ..core.models import ProviderSystem, ServiceRegistrationRequest
-
         config = Config.load_from_env(privileged=True)
         async with Client(config) as client:
-            all_systems = {s.name: s for s in await client.management.get_systems()}
+            all_systems = {s.name: s for s in await client.get_systems()}
 
             service_regs = []
             for i in range(len(systems)):
@@ -481,7 +457,7 @@ def register_service(systems: Tuple[str], definitions: Tuple[str], uris: Tuple[s
                 return
 
             with console.status(f"Registering {len(service_regs)} services concurrently..."):
-                results = await client.management.register_services_batch(service_regs)
+                results = await client.register_services_batch(service_regs)
 
             table = Table(title="Service Registration Summary")
             table.add_column("Service Definition", style="cyan")
@@ -522,7 +498,7 @@ def unregister_service(id: int) -> None:
         config = Config.load_from_env(privileged=True)
         async with Client(config) as client:
             try:
-                service = await client.management.get_service_by_id(id)
+                service = await client.get_service_by_id(id)
                 service_name = service.service_definition.service_definition
                 provider_name = service.provider.name
             except Exception:
@@ -530,7 +506,7 @@ def unregister_service(id: int) -> None:
                 sys.exit(1)
 
             with console.status(f"Unregistering service '{service_name}' (ID: {id})..."):
-                await client.management.unregister_service(id)
+                await client.unregister_service(id)
 
             rprint(
                 f"[green]✓ Service '{service_name}' from system '{provider_name}' unregistered successfully[/green]")
@@ -552,7 +528,7 @@ def get_service(id: int, authinfo: bool) -> None:
     async def _main() -> None:
         config = Config.load_from_env(privileged=True)
         async with Client(config) as client:
-            service = await client.management.get_service_by_id(id)
+            service = await client.get_service_by_id(id)
 
             table = Table(
                 title=f"Service Details - {service.service_definition.service_definition}")
@@ -607,7 +583,7 @@ def list_authorizations() -> None:
     async def _main() -> None:
         config = Config.load_from_env(privileged=True)
         async with Client(config) as client:
-            auth_list = await client.management.get_authorizations()
+            auth_list = await client.get_authorizations()
 
             if not auth_list:
                 rprint("[yellow]No authorization rules found[/yellow]")
@@ -651,12 +627,10 @@ def add_authorization(consumers: Tuple[str], providers: Tuple[str], services: Tu
             rprint("Please provide one of each for every authorization rule.")
             sys.exit(1)
 
-        from ..core.models import AddAuthorizationRequest
-
         config = Config.load_from_env(privileged=True)
         async with Client(config) as client:
             # Get all systems to resolve names to IDs
-            all_systems = {s.name: s for s in await client.management.get_systems()}
+            all_systems = {s.name: s for s in await client.get_systems()}
 
             auth_reqs = []
             for consumer_name, provider_name, service_def in zip(consumers, providers, services):
@@ -665,14 +639,14 @@ def add_authorization(consumers: Tuple[str], providers: Tuple[str], services: Tu
                     provider = all_systems[provider_name]
 
                     # Get service definition IDs for this provider and service
-                    service_def_ids = await client.management.get_service_definition_ids_for_provider(provider.id, service_def)
+                    service_def_ids = await client.get_service_definition_ids_for_provider(provider.id, service_def)
                     if not service_def_ids:
                         rprint(
                             f"[red]Warning: No service definition '{service_def}' found for provider '{provider_name}'. Skipping.[/red]")
                         continue
 
                     # Get interface IDs for this provider
-                    interface_ids = await client.management.get_interface_ids_for_provider(provider.id)
+                    interface_ids = await client.get_interface_ids_for_provider(provider.id)
                     if not interface_ids:
                         rprint(
                             f"[red]Warning: No interfaces found for provider '{provider_name}'. Skipping.[/red]")
@@ -696,7 +670,7 @@ def add_authorization(consumers: Tuple[str], providers: Tuple[str], services: Tu
                 return
 
             with console.status(f"Adding {len(auth_reqs)} authorization rules in batch..."):
-                results = await client.management.add_authorizations_batch(auth_reqs)
+                results = await client.add_authorizations_batch(auth_reqs)
 
             table = Table(title="Authorization Rules Summary")
             table.add_column("Consumer", style="cyan")
@@ -735,7 +709,7 @@ def remove_authorization(id: int) -> None:
         config = Config.load_from_env(privileged=True)
         async with Client(config) as client:
             try:
-                auth_list = await client.management.get_authorizations()
+                auth_list = await client.get_authorizations()
                 auth_to_remove = next(
                     (auth for auth in auth_list if auth.id == id), None)
                 if not auth_to_remove:
@@ -753,7 +727,7 @@ def remove_authorization(id: int) -> None:
                 sys.exit(1)
 
             with console.status(f"Removing authorization rule (ID: {id})..."):
-                await client.management.remove_authorization(id)
+                await client.remove_authorization(id)
 
             rprint("[green]✓ Authorization rule removed successfully[/green]")
             rprint(
@@ -844,7 +818,7 @@ def generate_certificate(
         # should match the system name exactly for mTLS authentication.
         # We will use the simple system name for the Common Name (CN).
         system_dname = f"CN={name}"
-        san = generate_subject_alternative_name(name)
+        san = CertManager.generate_subject_alternative_name(name)
 
         # Check if system keystore already exists
         if os.path.exists(system_keystore):
@@ -853,7 +827,7 @@ def generate_certificate(
             sys.exit(1)
 
         # Load certificate manager and create keystore
-        cert_manager = load_cert_manager()
+        cert_manager = CertManager()
 
         with console.status(f"Generating certificate for system '{name}'..."):
             cert_manager.create_system_keystore(
@@ -939,7 +913,7 @@ def convert_p12_to_pem(
         base_name = os.path.splitext(p12_file)[0]
         cert_output = cert_output or f"{base_name}.crt"
         key_output = key_output or f"{base_name}.key"
-        cert_manager = load_cert_manager()
+        cert_manager = CertManager()
         with console.status(f"Converting {p12_file} to PEM format..."):
             cert_manager.convert_p12_to_pem(
                 p12_file, password, cert_output, key_output)

@@ -4,52 +4,22 @@ import logging
 import os
 import shutil
 import subprocess
-from abc import ABC, abstractmethod
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 
-class CertManager(ABC):
-    """Abstract base class for certificate managers."""
-
-    @abstractmethod
-    def create_system_keystore(
-        self,
-        root_keystore: str,
-        root_alias: str,
-        cloud_keystore: str,
-        cloud_alias: str,
-        system_keystore: str,
-        system_dname: str,
-        system_alias: str,
-        san: str,
-        password: str,
-    ) -> None:
-        """Create a system keystore."""
-        pass
-
-    @abstractmethod
-    def get_public_key(self, keystore_path: str, password: str) -> str:
-        """Get public key from keystore."""
-        pass
-
-    @abstractmethod
-    def convert_p12_to_pem(
-        self, p12_file: str, password: str, output_cert: str, output_key: str
-    ) -> None:
-        """Convert PKCS#12 file to PEM format."""
-        pass
-
-
-class OpenSSLCertManager(CertManager):
+class CertManager:
     """Certificate manager using OpenSSL."""
 
-    def _run_openssl_command(self, *args: str) -> subprocess.CompletedProcess:
-        """Run an OpenSSL command."""
-        cmd = ["openssl"] + list(args)
-        logger.debug(f"Running: {' '.join(cmd)}")
-        return subprocess.run(cmd, check=True, capture_output=True, text=True)
+    def __init__(self) -> None:
+        if not shutil.which("openssl"):
+            raise RuntimeError("OpenSSL is not installed or not found in PATH")
+
+    @staticmethod
+    def generate_subject_alternative_name(name: str) -> str:
+        """Generate Subject Alternative Name for certificate."""
+        return f"DNS:{name},DNS:{name}-ip,DNS:localhost,IP:127.0.0.1"
 
     def create_system_keystore(
         self,
@@ -91,53 +61,27 @@ class OpenSSLCertManager(CertManager):
         try:
             # 1. Generate the system RSA private key
             logger.debug("Generating system private key...")
-            self._run_openssl_command("genrsa", "-out", system_key_file, "2048")
+            subprocess.run(
+                ["openssl", "genrsa", "-out", system_key_file, "2048"],
+                check=True, capture_output=True, text=True)
 
             # 2. Generate a certificate signing request (CSR) with the desired subject and SAN
-            # FIX: Use system_dname directly as the subject. It should be in "CN=name" format.
-            subj = f"/{system_dname}"
-            logger.debug(f"Generating CSR for system certificate with subject: {subj}")
-            self._run_openssl_command(
-                "req",
-                "-new",
-                "-key",
-                system_key_file,
-                "-subj",
-                subj, # Use the full subject string
-                "-addext",
-                f"subjectAltName={san}",
-                "-out",
-                csr_file,
-            )
+            logger.debug(f"Generating CSR for system certificate with subject: /{system_dname} and SAN: {san}...")
+            subprocess.run(
+                ["openssl", "req", "-new", "-key", system_key_file, "-subj", f"/{system_dname}", "-addext", f"subjectAltName={san}", "-out", csr_file],
+                check=True, capture_output=True, text=True)
 
             # 3. Extract the cloud CA's key and certificate if not already available
-            pass_arg = f"pass:{password}"
             logger.debug("Extracting cloud key from cloud PKCS#12 file...")
-            self._run_openssl_command(
-                "pkcs12",
-                "-in",
-                cloud_keystore,
-                "-nocerts",
-                "-nodes",
-                "-passin",
-                pass_arg,
-                "-out",
-                cloud_key_file,
-            )
+            subprocess.run(
+                ["openssl", "pkcs12", "-in", cloud_keystore, "-nocerts", "-nodes", "-passin", f"pass:{password}", "-out", cloud_key_file],
+                check=True, capture_output=True, text=True)
 
             if not os.path.exists(cloud_cert_file):
                 logger.debug("Extracting cloud certificate from cloud PKCS#12 file...")
-                self._run_openssl_command(
-                    "pkcs12",
-                    "-in",
-                    cloud_keystore,
-                    "-clcerts",
-                    "-nokeys",
-                    "-passin",
-                    pass_arg,
-                    "-out",
-                    cloud_cert_file,
-                )
+                subprocess.run(
+                    ["openssl", "pkcs12", "-in", cloud_keystore, "-clcerts", "-nokeys", "-passin", f"pass:{password}", "-out", cloud_cert_file],
+                    check=True, capture_output=True, text=True)
 
             # 4. Create a temporary extension file to supply the subjectAltName when signing
             ext_file = "v3ext.cnf"
@@ -154,7 +98,8 @@ subjectAltName = {san}
 
             # 5. Sign the CSR with the cloud CA's key and certificate
             logger.debug("Signing CSR with cloud CA...")
-            self._run_openssl_command(
+            subprocess.run([
+                "openssl",
                 "x509",
                 "-req",
                 "-in",
@@ -171,8 +116,8 @@ subjectAltName = {san}
                 "-extfile",
                 ext_file,
                 "-extensions",
-                "v3_ext",
-            )
+                "v3_ext"
+            ], check=True, capture_output=True, text=True)
 
             # 6. Build the certificate chain file
             # The chain file contains first the cloud certificate, then the root certificate
@@ -191,7 +136,8 @@ subjectAltName = {san}
             # 7. Create the system PKCS#12 keystore
             # It bundles the system's private key, the signed certificate, and the CA chain
             logger.debug("Creating system PKCS#12 keystore...")
-            self._run_openssl_command(
+            subprocess.run([
+                "openssl",
                 "pkcs12",
                 "-export",
                 "-inkey",
@@ -203,14 +149,14 @@ subjectAltName = {san}
                 "-out",
                 system_keystore,
                 "-passout",
-                pass_arg,
-            )
+                f"pass:{password}"
+            ], check=True, capture_output=True, text=True)
 
             # 8. Extract the system public key from the signed certificate
             logger.debug("Extracting system public key...")
-            result = self._run_openssl_command(
-                "x509", "-in", signed_cert_file, "-pubkey", "-noout"
-            )
+            result = subprocess.run(
+                ["openssl", "x509", "-in", signed_cert_file, "-pubkey", "-noout"],
+                check=True, capture_output=True, text=True)
 
             with open(system_pub_file, "w") as f:
                 f.write(result.stdout)
@@ -235,20 +181,12 @@ subjectAltName = {san}
             logger.debug("Extracting public key from system keystore...")
             temp_cert = "temp_cert.crt"
             try:
-                self._run_openssl_command(
-                    "pkcs12",
-                    "-in",
-                    system_keystore,
-                    "-nokeys",
-                    "-clcerts",
-                    "-passin",
-                    f"pass:{password}",
-                    "-out",
-                    temp_cert,
-                )
-                result = self._run_openssl_command(
-                    "x509", "-in", temp_cert, "-pubkey", "-noout"
-                )
+                subprocess.run(
+                    ["openssl", "pkcs12", "-in", system_keystore, "-nokeys", "-clcerts", "-passin", f"pass:{password}", "-out", temp_cert],
+                    check=True, capture_output=True, text=True)
+                result = subprocess.run(
+                    ["openssl", "x509", "-in", temp_cert, "-pubkey", "-noout"],
+                    check=True, capture_output=True, text=True)
                 with open(system_pub_file, "w") as f:
                     f.write(result.stdout)
             finally:
@@ -262,15 +200,9 @@ subjectAltName = {san}
 
         try:
             # Extract certificate from PKCS#12
-            cert_result = self._run_openssl_command(
-                "pkcs12",
-                "-in",
-                keystore_path,
-                "-clcerts",
-                "-nokeys",
-                "-passin",
-                f"pass:{password}",
-            )
+            cert_result = subprocess.run(
+                ["openssl", "pkcs12", "-in", keystore_path, "-clcerts", "-nokeys", "-passin", f"pass:{password}"],
+                check=True, capture_output=True, text=True)
 
             # Extract public key from certificate
             pub_key_result = subprocess.run(
@@ -278,7 +210,7 @@ subjectAltName = {san}
                 input=cert_result.stdout,
                 text=True,
                 check=True,
-                capture_output=True,
+                capture_output=True
             )
 
             # Clean output: Remove headers and newlines for authentication info format
@@ -292,55 +224,20 @@ subjectAltName = {san}
         except subprocess.CalledProcessError as e:
             raise RuntimeError(f"Failed to extract public key: {e}")
 
-    def convert_p12_to_pem(
-        self, p12_file: str, password: str, output_cert: str, output_key: str
-    ) -> None:
+    def convert_p12_to_pem(self, p12_file: str, password: str, output_cert: str, output_key: str) -> None:
         """Convert PKCS#12 file to PEM format using OpenSSL."""
         try:
             # Extract certificate
-            cert_cmd = [
-                "openssl",
-                "pkcs12",
-                "-in",
-                p12_file,
-                "-out",
-                output_cert,
-                "-clcerts",
-                "-nokeys",
-                "-passin",
-                f"pass:{password}",
-            ]
-            subprocess.run(cert_cmd, check=True)
+            subprocess.run(
+                ["openssl", "pkcs12", "-in", p12_file, "-out", output_cert, "-clcerts", "-nokeys", "-passin", f"pass:{password}"],
+                check=True
+            )
 
             # Extract private key
-            key_cmd = [
-                "openssl",
-                "pkcs12",
-                "-in",
-                p12_file,
-                "-out",
-                output_key,
-                "-nocerts",
-                "-nodes",
-                "-passin",
-                f"pass:{password}",
-            ]
-            subprocess.run(key_cmd, check=True)
+            subprocess.run(
+                ["openssl", "pkcs12", "-in", p12_file, "-out", output_key, "-nocerts", "-nodes", "-passin", f"pass:{password}"],
+                check=True
+            )
 
         except subprocess.CalledProcessError as e:
             raise RuntimeError(f"Failed to convert P12 to PEM: {e}")
-
-
-def generate_subject_alternative_name(name: str) -> str:
-    """Generate Subject Alternative Name for certificate."""
-    return f"DNS:{name},DNS:{name}-ip,DNS:localhost,IP:127.0.0.1"
-
-
-def load_cert_manager() -> CertManager:
-    """Load an available certificate manager."""
-    if shutil.which("openssl"):
-        logger.debug("Using openssl as certificate manager")
-        return OpenSSLCertManager()
-    else:
-        logger.error("openssl command not found. Please install OpenSSL.")
-        raise RuntimeError("openssl command not found. Please install OpenSSL.")
