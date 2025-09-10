@@ -28,11 +28,11 @@ pip install -e .
 ### 3. Deploy Arrowhead Core Services
 This SDK is compatible with both the standard Java-based Arrowhead Core systems and the lightweight `arrowhead-lite` Go implementation.
 
-*   **For `arrowhead-lite` (Recommended for local development):**
-    Follow the setup instructions in the `arrowhead-lite` repository to generate certificates and run the server.
+* **For `arrowhead-lite` (Recommended for local development):**
+  Follow the setup instructions in the `arrowhead-lite` repository to generate certificates and run the server.
 
-*   **For Java Arrowhead Core:**
-    Follow the setup instructions in the [arrowhead-core-docker](https://github.com/johankristianss/arrowhead-core-docker) repository.
+* **For Java Arrowhead Core:**
+  Follow the setup instructions in the [arrowhead-core-docker](https://github.com/johankristianss/arrowhead-core-docker) repository.
 
 ## Configuration
 
@@ -89,30 +89,48 @@ arrowhead systems ls
 ## Tutorial: Developing a Multi-System Arrowhead Application
 
 This tutorial walks you through creating an Arrowhead-based car manufacturing system consisting of three components:
-1. A **Serial Generator**: Provides unique serial numbers.
-2. A **Car Provider**: Creates cars and assigns them unique serial numbers provided by the **Serial Generator**.
+1. A **Serial Number Generator**: Provides unique serial numbers.
+2. A **Car Provider**: Creates cars and assigns them unique serial numbers provided by the **Serial Number Generator**.
 3. A **Car Consumer**: Orders cars from the **Car Provider**.
+
+### Step 0: Prepare the Environment
+
+Create a Python virtual environment and install the SDK:
+
+```bash
+python -m venv venv
+source venv/bin/activate
+pip install .
+```
 
 ### Step 1: Register Systems
 The `arrowhead systems register` command creates the necessary certificates and registers the system with the Service Registry in one step.
 
 ```bash
+# Ensure your environment variables are loaded
+source arrowhead-lite.env
+
 # Create the serial number generator system
-mkdir serial-number-generator && cd serial-number-generator
+mkdir serial-number-generator
+cd serial-number-generator
 arrowhead systems register --name serialgenerator --address localhost --port 8882
 cd ..
 
 # Create the car provider system
-mkdir carprovider && cd carprovider
+mkdir carprovider
+cd carprovider
 arrowhead systems register --name carprovider --address localhost --port 8880
 cd ..
 
 # Create the consumer system
-mkdir carconsumer && cd carconsumer
+mkdir carconsumer
+cd carconsumer
 arrowhead systems register --name carconsumer --address localhost --port 8881
 cd ..
+
+# Verify all systems are registered
+arrowhead systems ls
 ```
-Verify all systems are registered: `arrowhead systems ls`.
 
 ### Step 2: Register Services
 Register the services each system will provide.
@@ -121,8 +139,10 @@ Register the services each system will provide.
 arrowhead services register --system serialgenerator --definition generate-serial-number --uri /generate --method POST
 arrowhead services register --system carprovider --definition create-car --uri /carfactory --method POST
 arrowhead services register --system carprovider --definition get-cars --uri /carfactory --method GET
+
+# Verify all services are registered
+arrowhead services ls
 ```
-Verify with `arrowhead services ls`.
 
 ### Step 3: Set Up Authorization Rules
 Configure which systems can consume services from other systems.
@@ -134,14 +154,16 @@ arrowhead auths add --consumer carconsumer --provider carprovider --service get-
 
 # Allow carprovider to access serialgenerator's service
 arrowhead auths add --consumer carprovider --provider serialgenerator --service generate-serial-number
+
+# Verify authorizations
+arrowhead auths ls
 ```
-Verify with `arrowhead auths ls`.
 
 ### Step 4: Serial Number Generator Implementation
-Navigate to the `serial-number-generator` directory and create `generator.py`.
+Navigate to the `serial-number-generator` directory and create `main.py`.
 
 ```python
-# serial-number-generator/generator.py
+# serial-number-generator/main.py
 import asyncio
 import logging
 
@@ -169,10 +191,10 @@ asyncio.run(system.run())
 ```
 
 ### Step 5: Car Provider System Implementation
-Navigate to the `carprovider` directory and create `provider.py`.
+Navigate to the `carprovider` directory and create `main.py`.
 
 ```python
-# carprovider/provider.py
+# carprovider/main.py
 import asyncio
 import json
 import logging
@@ -196,6 +218,10 @@ system = System(name="carprovider", port=8880, address="localhost")
 @system.service(name="create-car", method="POST", endpoint="/carfactory")
 async def create_car(request: Request) -> Response:
     logger.info("Handling request to create a car")
+    if not request.payload:
+        logger.error("No payload provided in the request")
+        return Response({"status": "error", "message": "No payload provided."}, status_code=400)
+
     car_data = json.loads(request.payload)
     
     logger.info("Requesting serial number from serial generator service")
@@ -228,10 +254,10 @@ asyncio.run(system.run())
 ```
 
 ### Step 6: Car Consumer System Implementation
-Navigate to the `carconsumer` directory and create `consumer.py`.
+Navigate to the `carconsumer` directory and create `main.py`.
 
 ```python
-# carconsumer/consumer.py
+# carconsumer/main.py
 import asyncio
 import json
 import logging
@@ -246,7 +272,7 @@ logger = logging.getLogger(__name__)
 class Car:
     brand: str
     color: str
-    serial_number: str = ""
+    serial_number: str | None = None
 
 async def main():
     async with System(name="carconsumer", port=8881, address="localhost") as system:
@@ -264,38 +290,46 @@ async def main():
         for car in cars:
             logger.info(f"  - {car.brand} ({car.color}) - Serial: {car.serial_number}")
 
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("Consumer stopped by user")
-    except Exception as e:
-        logger.info(f"Error: {e}")
+try:
+    asyncio.run(main())
+except KeyboardInterrupt:
+    logger.info("Consumer stopped by user")
+except Exception as e:
+    logger.info(f"Error: {e}")
 ```
 
 ### Step 7: Run the Multi-System Demo
 
-Now you can run the complete multi-system demo.
+Now you can run the complete multi-system demo in three separate terminal windows.
 
 **Terminal 1 - Start the Serial Generator:**
 Navigate to the `serial-number-generator` directory, source its environment file, and run the Python script.
 
 ```bash
-cd serial-number-generator; source serialgenerator.env; python generator.py
+source venv/bin/activate
+cd serial-number-generator
+source serialgenerator.env
+python main.py
 ```
 
 **Terminal 2 - Start the Car Provider:**
 Navigate to the `carprovider` directory, source its environment file, and run the Python script.
 
 ```bash
-cd carprovider; source carprovider.env; python provider.py
+source venv/bin/activate
+cd carprovider
+source carprovider.env
+python main.py
 ```
 
 **Terminal 3 - Run the Consumer:**
 Open a new terminal, navigate to the `carconsumer` directory, source its environment file, and run the script.
 
 ```bash
-cd carconsumer; source carconsumer.env; python consumer.py
+source venv/bin/activate
+cd carconsumer
+source carconsumer.env
+python main.py
 ```
 Output:
 ```

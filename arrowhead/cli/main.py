@@ -263,10 +263,22 @@ def register(names: Tuple[str], addresses: Tuple[str], ports: Tuple[int]) -> Non
 
                 # Create env file
                 env_content = textwrap.dedent(f"""\
+                    # Arrowhead system configuration for {name}
                     export ARROWHEAD_KEYSTORE_PATH=./{name}.p12
+                    export ARROWHEAD_KEYSTORE_PASSWORD={password}
+                    export ARROWHEAD_TRUSTSTORE={config.truststore_path}
                     export ARROWHEAD_SYSTEM_NAME={name}
                     export ARROWHEAD_SYSTEM_ADDRESS={address}
-                    export ARROWHEAD_SYSTEM_PORT={port}""")
+                    export ARROWHEAD_SYSTEM_PORT={port}
+
+                    # Core service locations
+                    export ARROWHEAD_AUTHORIZATION_HOST={config.authorization_host}
+                    export ARROWHEAD_AUTHORIZATION_PORT={config.authorization_port}
+                    export ARROWHEAD_SERVICEREGISTRY_HOST={config.service_registry_host}
+                    export ARROWHEAD_SERVICEREGISTRY_PORT={config.service_registry_port}
+                    export ARROWHEAD_ORCHESTRATOR_HOST={config.orchestrator_host}
+                    export ARROWHEAD_ORCHESTRATOR_PORT={config.orchestrator_port}
+                    """)
                 with open(f"{name}.env", "w") as f:
                     f.write(env_content)
 
