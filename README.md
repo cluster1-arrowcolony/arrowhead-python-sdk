@@ -242,7 +242,7 @@ async def create_car(request: Request) -> Response:
         "status": "success", 
         "message": f"Car '{new_car.brand}' created with serial number {serial_number}.",
         "serial_number": serial_number
-    }, status_code=201)
+    }, status_code=200)
 
 @system.service(name="get-cars", method="GET", endpoint="/carfactory")
 async def get_cars(_: Request) -> Response:
