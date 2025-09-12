@@ -36,48 +36,27 @@ This SDK is compatible with both the standard Java-based Arrowhead Core systems 
 
 ## Configuration
 
-All configurations are managed using environment variables. Create a file named `arrowhead-lite.env` (or similar) in the root of this project.
+All configurations are managed using environment variables. A template configuration file `arrowhead.env` is provided in the repository root.
 
-**Example for `arrowhead-lite`:**
+**Setup:**
 
-```bash
-# General SDK settings
-export ARROWHEAD_VERBOSE="true"
+1. Copy and customize the configuration file:
+   ```bash
+   cp arrowhead.env my-arrowhead.env
+   ```
 
-# --- Certificate Configuration ---
-# Absolute path to your certs directory (e.g., arrowhead-lite/certs)
-CERTS_DIR="/path/to/your/certs"
-
-# Sysop certificate for management tasks
-export ARROWHEAD_SYSOPS_KEYSTORE="${CERTS_DIR}/sysop.p12"
-
-# Truststore containing the CA that signed the server and client certs
-export ARROWHEAD_TRUSTSTORE="${CERTS_DIR}/truststore.pem"
-
-# Universal password for all keystores
-export ARROWHEAD_KEYSTORE_PASSWORD="123456"
-
-# CA Configuration for registering new systems
-export ARROWHEAD_ROOT_KEYSTORE="${CERTS_DIR}/ca.p12"
-export ARROWHEAD_ROOT_KEYSTORE_ALIAS="ArrowheadLiteLocalCA"
-export ARROWHEAD_CLOUD_KEYSTORE="${CERTS_DIR}/ca.p12"
-export ARROWHEAD_CLOUD_KEYSTORE_ALIAS="ArrowheadLiteLocalCA"
-
-# --- Arrowhead Lite Core Service Configuration ---
-export ARROWHEAD_AUTHORIZATION_HOST="localhost"
-export ARROWHEAD_AUTHORIZATION_PORT="8443"
-export ARROWHEAD_SERVICEREGISTRY_HOST="localhost"
-export ARROWHEAD_SERVICEREGISTRY_PORT="8443"
-export ARROWHEAD_ORCHESTRATOR_HOST="localhost"
-export ARROWHEAD_ORCHESTRATOR_PORT="8443"
-```
+2. Edit `my-arrowhead.env` and update the `CERTS_DIR` path to point to your certificates directory:
+   ```bash
+   # Change this line to your actual certificates path
+   CERTS_DIR="/path/to/your/certs"
+   ```
 
 **Note**: If you are connecting to `arrowhead-lite`, make sure all `ARROWHEAD_*_PORT` are set to `8443`, and all `ARROWHEAD_*_HOST` are set to the host where `./arrowhead-lite` is running (e.g., `localhost`).
 
 Remember to source the file to load the configurations:
 
 ```bash
-source arrowhead-lite.env
+source my-arrowhead.env
 ```
 
 Try the Arrowhead CLI tool to verify your setup:
@@ -110,7 +89,7 @@ The `arrowhead systems register` command creates the necessary certificates and 
 
 ```bash
 # Ensure your environment variables are loaded
-source arrowhead-lite.env
+source my-arrowhead.env
 
 # Register the serial number generator system
 cd examples/serial-number-generator
@@ -176,7 +155,7 @@ Now you can run the complete multi-system demo in three separate terminal window
 **Terminal 1 - Start the Serial Generator:**
 ```bash
 source venv/bin/activate
-source arrowhead-lite.env
+source my-arrowhead.env
 cd examples/serial-number-generator
 source serialgenerator.env
 python main.py
@@ -185,7 +164,7 @@ python main.py
 **Terminal 2 - Start the Car Provider:**
 ```bash
 source venv/bin/activate
-source arrowhead-lite.env
+source my-arrowhead.env
 cd examples/carprovider
 source carprovider.env
 python main.py
@@ -194,7 +173,7 @@ python main.py
 **Terminal 3 - Run the Consumer:**
 ```bash
 source venv/bin/activate
-source arrowhead-lite.env
+source my-arrowhead.env
 cd examples/carconsumer
 source carconsumer.env
 python main.py
