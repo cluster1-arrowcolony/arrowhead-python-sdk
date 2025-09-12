@@ -93,6 +93,8 @@ This tutorial walks you through creating an Arrowhead-based car manufacturing sy
 2. A **Car Provider**: Creates cars and assigns them unique serial numbers provided by the **Serial Number Generator**.
 3. A **Car Consumer**: Orders cars from the **Car Provider**.
 
+**Note**: Complete implementation examples for all three services are available in the `examples/` directory.
+
 ### Step 0: Prepare the Environment
 
 Create a Python virtual environment and install the SDK:
@@ -104,29 +106,26 @@ pip install .
 ```
 
 ### Step 1: Register Systems
-The `arrowhead systems register` command creates the necessary certificates and registers the system with the Service Registry in one step.
+The `arrowhead systems register` command creates the necessary certificates and registers the system with the Service Registry in one step. Run each command from the respective examples directory so certificates are generated in the correct location.
 
 ```bash
 # Ensure your environment variables are loaded
 source arrowhead-lite.env
 
-# Create the serial number generator system
-mkdir serial-number-generator
-cd serial-number-generator
+# Register the serial number generator system
+cd examples/serial-number-generator
 arrowhead systems register --name serialgenerator --address localhost --port 8882
-cd ..
+cd ../..
 
-# Create the car provider system
-mkdir carprovider
-cd carprovider
+# Register the car provider system
+cd examples/carprovider
 arrowhead systems register --name carprovider --address localhost --port 8880
-cd ..
+cd ../..
 
-# Create the consumer system
-mkdir carconsumer
-cd carconsumer
+# Register the consumer system
+cd examples/carconsumer
 arrowhead systems register --name carconsumer --address localhost --port 8881
-cd ..
+cd ../..
 
 # Verify all systems are registered
 arrowhead systems ls
@@ -159,175 +158,44 @@ arrowhead auths add --consumer carprovider --provider serialgenerator --service 
 arrowhead auths ls
 ```
 
-### Step 4: Serial Number Generator Implementation
-Navigate to the `serial-number-generator` directory and create `main.py`.
+### Step 4: Implementation Files
+The complete implementations for all three services are available in the `examples/` directory:
 
-```python
-# serial-number-generator/main.py
-import asyncio
-import logging
+- **`examples/serial-number-generator/main.py`** - A simple service that generates unique sequential serial numbers via a POST endpoint `/generate`. Maintains an internal counter and returns JSON responses with the next available serial number.
 
-from arrowhead import System, Request, Response
+- **`examples/carprovider/main.py`** - A car manufacturing service that provides two endpoints:
+  - `POST /carfactory` - Creates new cars by accepting brand/color data, requesting a serial number from the serial generator, and storing the car with its assigned serial number
+  - `GET /carfactory` - Returns a list of all manufactured cars with their details
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+- **`examples/carconsumer/main.py`** - A consumer application that demonstrates service orchestration by ordering a Toyota car from the car provider and then retrieving the complete list of manufactured cars. Runs once and exits.
 
-serial_counter = 1
-system = System(name="serialgenerator", port=8882, address="localhost")
-
-@system.service(name="generate-serial-number", method="POST", endpoint="/generate")
-async def generate_serial_number(_: Request) -> Response:
-    global serial_counter
-    logger.info("Handling request to generate serial number")
-    
-    current_serial = serial_counter
-    serial_counter += 1
-    
-    logger.info(f"Generated serial number: {current_serial}")
-    return Response({"serial_number": current_serial})
-
-logger.info(f"Starting serial number generator '{system.name}' on {system.address}:{system.port}...")
-asyncio.run(system.run())
-```
-
-### Step 5: Car Provider System Implementation
-Navigate to the `carprovider` directory and create `main.py`.
-
-```python
-# carprovider/main.py
-import asyncio
-import json
-import logging
-from dataclasses import asdict, dataclass
-from typing import List
-
-from arrowhead import System, Request, Response
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-@dataclass
-class Car:
-    brand: str
-    color: str
-    serial_number: str
-
-cars: List[Car] = []
-system = System(name="carprovider", port=8880, address="localhost")
-
-@system.service(name="create-car", method="POST", endpoint="/carfactory")
-async def create_car(request: Request) -> Response:
-    logger.info("Handling request to create a car")
-    if not request.payload:
-        logger.error("No payload provided in the request")
-        return Response({"status": "error", "message": "No payload provided."}, status_code=400)
-
-    car_data = json.loads(request.payload)
-    
-    logger.info("Requesting serial number from serial generator service")
-    serial_response = await system.send_request("generate-serial-number")
-    serial_data = json.loads(serial_response.decode("utf-8"))
-    serial_number = serial_data["serial_number"]
-    logger.info(f"Received serial number: {serial_number}")
-    
-    new_car = Car(
-        brand=car_data["brand"], 
-        color=car_data["color"],
-        serial_number=serial_number
-    )
-    cars.append(new_car)
-    logger.info(f"Car created: {new_car}")
-    
-    return Response({
-        "status": "success", 
-        "message": f"Car '{new_car.brand}' created with serial number {serial_number}.",
-        "serial_number": serial_number
-    }, status_code=201)
-
-@system.service(name="get-cars", method="GET", endpoint="/carfactory")
-async def get_cars(_: Request) -> Response:
-    logger.info("Handling request to get cars")
-    return Response([asdict(car) for car in cars])
-
-logger.info(f"Starting provider '{system.name}' on {system.address}:{system.port}...")
-asyncio.run(system.run())
-```
-
-### Step 6: Car Consumer System Implementation
-Navigate to the `carconsumer` directory and create `main.py`.
-
-```python
-# carconsumer/main.py
-import asyncio
-import json
-import logging
-from dataclasses import asdict, dataclass
-
-from arrowhead import System
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-@dataclass
-class Car:
-    brand: str
-    color: str
-    serial_number: str | None = None
-
-async def main():
-    async with System(name="carconsumer", port=8881, address="localhost") as system:
-        car = Car(brand="Toyota", color="Red")
-        logger.info(f"Requesting to create car: {car}")
-        response = await system.send_request("create-car", json.dumps(asdict(car)).encode("utf-8"))
-        logger.info("Car consumer started. Sending requests...")
-        logger.info(f"Got response: {response.decode('utf-8')}")
-
-        logger.info("Retrieving cars...")
-        response = await system.send_request("get-cars")
-        cars = [Car(**car_data) for car_data in json.loads(response.decode("utf-8"))]
-
-        logger.info("Retrieved cars:")
-        for car in cars:
-            logger.info(f"  - {car.brand} ({car.color}) - Serial: {car.serial_number}")
-
-try:
-    asyncio.run(main())
-except KeyboardInterrupt:
-    logger.info("Consumer stopped by user")
-except Exception as e:
-    logger.info(f"Error: {e}")
-```
-
-### Step 7: Run the Multi-System Demo
+### Step 5: Run the Multi-System Demo
 
 Now you can run the complete multi-system demo in three separate terminal windows.
 
 **Terminal 1 - Start the Serial Generator:**
-Navigate to the `serial-number-generator` directory, source its environment file, and run the Python script.
-
 ```bash
 source venv/bin/activate
-cd serial-number-generator
+source arrowhead-lite.env
+cd examples/serial-number-generator
 source serialgenerator.env
 python main.py
 ```
 
 **Terminal 2 - Start the Car Provider:**
-Navigate to the `carprovider` directory, source its environment file, and run the Python script.
-
 ```bash
 source venv/bin/activate
-cd carprovider
+source arrowhead-lite.env
+cd examples/carprovider
 source carprovider.env
 python main.py
 ```
 
 **Terminal 3 - Run the Consumer:**
-Open a new terminal, navigate to the `carconsumer` directory, source its environment file, and run the script.
-
 ```bash
 source venv/bin/activate
-cd carconsumer
+source arrowhead-lite.env
+cd examples/carconsumer
 source carconsumer.env
 python main.py
 ```
