@@ -311,23 +311,38 @@ response = await system.send_request("service-name", params={"param1": "value1"}
 
 **Start a provider system:**
 ```python
+# Provide a service
+@system.service("some-service", method="POST", endpoint="/echo")
+async def service(request: Request) -> Response:
+    return Response({"message": "Hello, World!"})
+
 # Run system (blocks until stopped)
-asyncio.run(system.run())
+system.run()
 ```
 
-**Use system as consumer:**
+**Start a consumer system:**
 ```python
+# Provide a service
+@system.main()
 async def main():
-    async with System(name="consumer", port=8081, address="localhost") as system:
-        response = await system.send_request("some-service")
+    response = await system.send_request("some-service")
 
-asyncio.run(main())
+system.run()
+```
+
+**Start a provider system that is also a consumer:**
+```python
+@system.service("some-service", method="POST", endpoint="/echo")
+async def service(request: Request) -> Response:
+    response = await system.send_request("another-service")
+    return Response({"message": f"Hello, World! {response}"})
+
+system.run()
 ```
 
 ### Complete Example
 
 ```python
-import asyncio
 import json
 from arrowhead import System, Request, Response
 
@@ -347,7 +362,7 @@ async def get_user(request: Request) -> Response:
     return Response({"user_id": user_id, "name": f"User {user_id}"})
 
 # Start the system
-asyncio.run(system.run())
+system.run()
 ```
 
 ## Development

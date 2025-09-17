@@ -1,5 +1,4 @@
 # carprovider/main.py
-import asyncio
 import json
 import logging
 from dataclasses import asdict, dataclass
@@ -54,4 +53,4 @@ async def get_cars(_: Request) -> Response:
     return Response([asdict(car) for car in cars])
 
 logger.info(f"Starting provider '{system.name}' on {system.address}:{system.port}...")
-asyncio.run(system.run())
+system.run()

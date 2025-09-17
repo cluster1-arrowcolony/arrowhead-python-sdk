@@ -41,6 +41,7 @@ class System:
     ssl_keyfile: str  # Path to the SSL key file
     temp_dir: str  # Temporary directory for TLS setup
     client: Client  # The Arrowhead client for orchestrating requests
+    _main: Optional[Callable[[], Awaitable[None]]] # For the @system.main() decorator
 
     def __init__(
         self,
@@ -69,6 +70,7 @@ class System:
         )
 
         self.services: List[Service] = []
+        self._main: Optional[Callable[[], Awaitable[None]]] = None
         self.running = False
         self.config = config or Config.load_from_env(privileged=False)
         self.temp_dir, self.ssl_certfile, self.ssl_keyfile = \
@@ -81,6 +83,15 @@ class System:
             if self.running:
                 raise RuntimeError("Cannot register new services after the server has started.")
             self.services.append(Service(handler, name, method.upper(), endpoint))
+            return handler
+        return decorator
+
+    def main(self) -> Callable:
+        """Decorator to register a function as the main entry point for a consumer system."""
+        def decorator(handler: Callable[[], Awaitable[None]]) -> Callable:
+            if self._main:
+                raise RuntimeError("A @system.main() handler has already been registered.")
+            self._main = handler
             return handler
         return decorator
 
@@ -116,26 +127,38 @@ class System:
         matched_service = response.matches[0]
         return await self.client.send_request(matched_service, payload, params)
 
-    async def run(self, verbose: bool=False) -> None:
-        """Starts the Uvicorn server to listen for requests (Provider role)."""
-        if not self.services:
-            logger.warning("Starting server with no services registered.")
 
-        await self._build_routes()
-        self.running = True
-        verbose = verbose or os.getenv("ARROWHEAD_VERBOSE") == "1"
-        logger.info(f"Starting server with mTLS on {self.address}:{self.port}")
-        server = uvicorn.Server(uvicorn.Config(
-            self.app,
-            host=self.address,
-            port=self.port,
-            log_level="info" if verbose else "warning",
-            ssl_keyfile=self.ssl_keyfile,
-            ssl_certfile=self.ssl_certfile,
-            ssl_ca_certs=self.config.truststore_path,
-            ssl_cert_reqs=ssl.CERT_REQUIRED,
-        ))
-        await server.serve()
+    def run(self, verbose: bool=False) -> None:
+        """Starts the Uvicorn server to listen for requests (Provider role)."""
+        import asyncio
+        asyncio.run(self.arun(verbose))
+
+    async def arun(self, verbose: bool=False) -> None:
+        """Starts the Uvicorn server to listen for requests (Provider role)."""
+        if self._main and self.services:
+            raise RuntimeError("@System.main(...) and @System.service(...) cannot be used at the same time.")
+        if self._main:
+            logger.info("Starting consumer system main function.")
+            async with self:
+                await self._main()
+        elif self.services:
+            await self._build_routes()
+            self.running = True
+            verbose = verbose or os.getenv("ARROWHEAD_VERBOSE") == "1"
+            logger.info(f"Starting server with mTLS on {self.address}:{self.port}")
+            server = uvicorn.Server(uvicorn.Config(
+                self.app,
+                host=self.address,
+                port=self.port,
+                log_level="info" if verbose else "warning",
+                ssl_keyfile=self.ssl_keyfile,
+                ssl_certfile=self.ssl_certfile,
+                ssl_ca_certs=self.config.truststore_path,
+                ssl_cert_reqs=ssl.CERT_REQUIRED,
+            ))
+            await server.serve()
+        else:
+            logger.warning("No services registered and no main function defined. Nothing to run.")
 
     async def aclose(self) -> None:
         """Clean up resources."""

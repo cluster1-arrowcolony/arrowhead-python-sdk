@@ -1,5 +1,4 @@
 # serial-number-generator/main.py
-import asyncio
 import logging
 
 from arrowhead import System, Request, Response
@@ -22,4 +21,4 @@ async def generate_serial_number(_: Request) -> Response:
     return Response({"serial_number": current_serial})
 
 logger.info(f"Starting serial number generator '{system.name}' on {system.address}:{system.port}...")
-asyncio.run(system.run())
+system.run()
