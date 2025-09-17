@@ -56,4 +56,4 @@ def read(var: str, default = None) -> str:
         return value
     if default:
         return default
-    raise ValueError(f"Environment variable {var} must be set.")
+    raise ValueError(f"Environment variable {var} must be set. Have you sourced the .env file?")
