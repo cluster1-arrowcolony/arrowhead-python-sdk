@@ -155,7 +155,6 @@ Now you can run the complete multi-system demo in three separate terminal window
 **Terminal 1 - Start the Serial Generator:**
 ```bash
 source venv/bin/activate
-source my-arrowhead.env
 cd examples/serial-number-generator
 source serialgenerator.env
 python main.py
@@ -164,7 +163,6 @@ python main.py
 **Terminal 2 - Start the Car Provider:**
 ```bash
 source venv/bin/activate
-source my-arrowhead.env
 cd examples/carprovider
 source carprovider.env
 python main.py
@@ -173,7 +171,6 @@ python main.py
 **Terminal 3 - Run the Consumer:**
 ```bash
 source venv/bin/activate
-source my-arrowhead.env
 cd examples/carconsumer
 source carconsumer.env
 python main.py
