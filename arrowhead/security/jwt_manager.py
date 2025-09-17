@@ -9,21 +9,21 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from jwcrypto import jwe, jwk
 
 
-class JWTHandler:
-    """JWT and JWE handling for Arrowhead Framework."""
+class JWTManager:
+    """JWT and JWE manager for the Arrowhead Framework."""
 
     @staticmethod
     def load_rsa_private_key(filename: str) -> rsa.RSAPrivateKey:
         """Load RSA private key from PEM file."""
         with open(filename, "rb") as key_file:
-            private_key = serialization.load_pem_private_key(
+            pvkey = serialization.load_pem_private_key(
                 key_file.read(), password=None, backend=default_backend()
             )
 
-        if not isinstance(private_key, rsa.RSAPrivateKey):
+        if not isinstance(pvkey, rsa.RSAPrivateKey):
             raise ValueError("Not an RSA private key")
 
-        return private_key
+        return pvkey
 
     @staticmethod
     def load_rsa_public_key(filename: str) -> rsa.RSAPublicKey:
@@ -51,10 +51,10 @@ class JWTHandler:
         return public_key
 
     @staticmethod
-    def decrypt_jwe(encrypted_jwt: str, private_key: rsa.RSAPrivateKey) -> str:
+    def decrypt_jwe(encrypted_jwt: str, pvkey: rsa.RSAPrivateKey) -> str:
         """Decrypt a JWE token using RSA private key."""
         # Convert to JWK format for jwcrypto
-        private_pem = private_key.private_bytes(
+        private_pem = pvkey.private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.PKCS8,
             encryption_algorithm=serialization.NoEncryption(),
@@ -70,10 +70,10 @@ class JWTHandler:
         return jwe_token.payload.decode("utf-8")
 
     @staticmethod
-    def verify_jwt(token_string: str, public_key: rsa.RSAPublicKey) -> Dict[str, Any]:
+    def verify_jwt(token_string: str, pbkey: rsa.RSAPublicKey) -> Dict[str, Any]:
         """Verify JWT signature and return payload."""
         # Convert public key to PEM format
-        public_pem = public_key.public_bytes(
+        public_pem = pbkey.public_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PublicFormat.SubjectPublicKeyInfo,
         )
@@ -85,10 +85,10 @@ class JWTHandler:
             raise ValueError(f"Invalid JWT token: {e}")
 
     @staticmethod
-    def create_jwt(payload: Dict[str, Any], private_key: rsa.RSAPrivateKey) -> str:
+    def create_jwt(payload: Dict[str, Any], pvkey: rsa.RSAPrivateKey) -> str:
         """Create a JWT token signed with RSA private key."""
         # Convert private key to PEM format
-        private_pem = private_key.private_bytes(
+        private_pem = pvkey.private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.PKCS8,
             encryption_algorithm=serialization.NoEncryption(),

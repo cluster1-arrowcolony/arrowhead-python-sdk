@@ -10,7 +10,7 @@ from fastapi import FastAPI, Request as FastAPIRequest
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response as FastAPIResponse
 
-from .core.models import OrchestrationRequest
+from .rpc.model import OrchestrationRequest
 from .http import Request, Response
 from .rpc.client import Client
 from .rpc.config import Config
