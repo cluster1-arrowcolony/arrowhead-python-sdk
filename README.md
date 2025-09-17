@@ -92,7 +92,7 @@ The `arrowhead systems register` command creates the necessary certificates and 
 source my-arrowhead.env
 
 # Register the serial number generator system
-cd examples/serial-number-generator
+cd examples/serial_number_generator
 arrowhead systems register --name serialgenerator --address localhost --port 8882
 cd ../..
 

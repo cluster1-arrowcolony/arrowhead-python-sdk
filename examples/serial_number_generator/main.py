@@ -1,4 +1,4 @@
-# serial-number-generator/main.py
+# serial_number_generator/main.py
 import logging
 
 from arrowhead import System, Request, Response
