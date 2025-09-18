@@ -185,6 +185,16 @@ INFO:__main__:Retrieved cars:
   - Toyota (Red) - Serial: 1
 ```
 
+### Step 6: Integration Tests
+
+The file `examples/test.py` contains an integration test for the application that can be run with `pytest`. This test simulates the complete interaction between the three services entirely in-memory, without requiring any authentication, network calls, or a running Arrowhead server. It works by using the SDK's `arrowhead.TestHarness` class, which wires the systems together. When one system tries to send a request to another, the harness intercepts the call and routes it directly to the correct service handler on the provider system.
+
+```
+python -m pytest examples/test.py
+```
+
+
+
 ## CLI Reference
 
 The `arrowhead` CLI provides comprehensive management capabilities for Arrowhead Framework systems, services, and authorizations.
@@ -290,22 +300,23 @@ async def my_service(request: Request) -> Response:
 
 **Send requests to other services:**
 ```python
-# Send request without payload
-response = await system.send_request("service-name")
+from arrowhead import Request, Response
 
-# Send request with payload
-payload = json.dumps({"key": "value"}).encode("utf-8")
-response = await system.send_request("service-name", payload)
+# Create a request object. The payload will be automatically JSON encoded.
+request = Request(payload={"key": "value"})
 
-# Send request with query parameters
-response = await system.send_request("service-name", params={"param1": "value1"})
+# Send the request and receive a Response object.
+response: Response = await system.send("service-name", request)
+
+# The response content is automatically parsed if it's JSON.
+print(response.content) # -> {'result': 'success'}
+print(response.status_code) # -> 200
 ```
 
-**`send_request` parameters:**
+**`send` parameters:**
 - `service_def`: Service definition name to call
-- `payload`: Request body as bytes (optional)
-- `params`: Query parameters as dict (optional)
-- **Returns**: Response body as bytes
+* `request`: An `arrowhead.Request` object containing the payload, query parameters, etc.
+* **Returns**: An `arrowhead.Response` object with the parsed response.
 
 ### Running Systems
 
@@ -325,7 +336,7 @@ system.run()
 # Provide a service
 @system.main()
 async def main():
-    response = await system.send_request("some-service")
+    response = await system.send("some-service", Request(payload={"data": "hello"}))
 
 system.run()
 ```
@@ -334,8 +345,8 @@ system.run()
 ```python
 @system.service("some-service", method="POST", endpoint="/echo")
 async def service(request: Request) -> Response:
-    response = await system.send_request("another-service")
-    return Response({"message": f"Hello, World! {response}"})
+    response = await system.send("another-service", Request())
+    return Response({"message": f"Hello, World! The other service said: {response.content}"})
 
 system.run()
 ```
@@ -352,8 +363,7 @@ system = System(name="example-system", port=8080, address="localhost")
 # Provide a service
 @system.service("echo", method="POST", endpoint="/echo")
 async def echo_service(request: Request) -> Response:
-    data = json.loads(request.payload)
-    return Response({"echo": data["message"]})
+    return Response({"echo": request.payload["message"]})
 
 # Provide a service with path parameters
 @system.service("get-user", method="GET", endpoint="/users/{user_id}")
@@ -367,21 +377,34 @@ system.run()
 
 ## Development
 
-### Requirements
-- Python 3.8+
-- `pip install -r requirements.txt`
+### Tooling
 
-### Testing
+This project uses `uv` for dependency management and `ruff` for linting and formatting. It is recommended to use the provided `Makefile` for common development tasks.
+
+### Setup
 ```bash
-# Install development dependencies
-pip install -e ".[dev]"
+# Install uv, create a virtual environment, and sync dependencies
+make sync
 
-# Run tests
-pytest
+# To activate the virtual environment manually
+source .venv/bin/activate
+```
 
-# Run linting and type checking
-black .
-isort .
-flake8
-mypy .
+### Running Checks
+
+```bash
+# Run all tests with pytest
+make test
+
+# Run tests with a coverage report
+make test-cov
+
+# Format code with ruff
+make format
+
+# Lint code with ruff
+make lint
+
+# Run type checks with pyright
+make check
 ```

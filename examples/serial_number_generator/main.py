@@ -1,4 +1,3 @@
-# serial_number_generator/main.py
 import logging
 
 from arrowhead import System, Request, Response
@@ -20,5 +19,6 @@ async def generate_serial_number(_: Request) -> Response:
     logger.info(f"Generated serial number: {current_serial}")
     return Response({"serial_number": current_serial})
 
-logger.info(f"Starting serial number generator '{system.name}' on {system.address}:{system.port}...")
-system.run()
+if __name__ == "__main__":
+    logger.info(f"Starting serial number generator '{system.name}' on {system.address}:{system.port}...")
+    system.run()
