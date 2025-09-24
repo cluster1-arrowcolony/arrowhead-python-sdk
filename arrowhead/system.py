@@ -133,7 +133,7 @@ class System:
             self.client = Client(self.config)
         return self.client
 
-    async def send(self, service_def: str, request: Request) -> Response:
+    async def send(self, service_name: str, request: Request) -> Response:
         """
         Sends a request to another service.
         Performs orchestration, converts the Arrowhead Request to an HTTPX Request,
@@ -141,9 +141,9 @@ class System:
         """
         client = self._client()
 
-        orchestration_response = await client.orchestrate(OrchestrationRequest(self.name, self.address, self.port, service_def))
+        orchestration_response = await client.orchestrate(OrchestrationRequest(self.name, self.address, self.port, service_name))
         if not orchestration_response.matches:
-            raise RuntimeError(f"No providers found for service: {service_def}")
+            raise RuntimeError(f"No providers found for service: {service_name}")
 
         service = orchestration_response.matches[0]
         token = service.authorization_tokens.get("HTTP-SECURE-JSON")
