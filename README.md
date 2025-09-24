@@ -36,48 +36,27 @@ This SDK is compatible with both the standard Java-based Arrowhead Core systems 
 
 ## Configuration
 
-All configurations are managed using environment variables. Create a file named `arrowhead-lite.env` (or similar) in the root of this project.
+All configurations are managed using environment variables. A template configuration file `arrowhead.env` is provided in the repository root.
 
-**Example for `arrowhead-lite`:**
+**Setup:**
 
-```bash
-# General SDK settings
-export ARROWHEAD_VERBOSE="true"
+1. Copy and customize the configuration file:
+   ```bash
+   cp arrowhead.env my-arrowhead.env
+   ```
 
-# --- Certificate Configuration ---
-# Absolute path to your certs directory (e.g., arrowhead-lite/certs)
-CERTS_DIR="/path/to/your/certs"
-
-# Sysop certificate for management tasks
-export ARROWHEAD_SYSOPS_KEYSTORE="${CERTS_DIR}/sysop.p12"
-
-# Truststore containing the CA that signed the server and client certs
-export ARROWHEAD_TRUSTSTORE="${CERTS_DIR}/truststore.pem"
-
-# Universal password for all keystores
-export ARROWHEAD_KEYSTORE_PASSWORD="123456"
-
-# CA Configuration for registering new systems
-export ARROWHEAD_ROOT_KEYSTORE="${CERTS_DIR}/ca.p12"
-export ARROWHEAD_ROOT_KEYSTORE_ALIAS="ArrowheadLiteLocalCA"
-export ARROWHEAD_CLOUD_KEYSTORE="${CERTS_DIR}/ca.p12"
-export ARROWHEAD_CLOUD_KEYSTORE_ALIAS="ArrowheadLiteLocalCA"
-
-# --- Arrowhead Lite Core Service Configuration ---
-export ARROWHEAD_AUTHORIZATION_HOST="localhost"
-export ARROWHEAD_AUTHORIZATION_PORT="8443"
-export ARROWHEAD_SERVICEREGISTRY_HOST="localhost"
-export ARROWHEAD_SERVICEREGISTRY_PORT="8443"
-export ARROWHEAD_ORCHESTRATOR_HOST="localhost"
-export ARROWHEAD_ORCHESTRATOR_PORT="8443"
-```
+2. Edit `my-arrowhead.env` and update the `CERTS_DIR` path to point to your certificates directory:
+   ```bash
+   # Change this line to your actual certificates path
+   CERTS_DIR="/path/to/your/certs"
+   ```
 
 **Note**: If you are connecting to `arrowhead-lite`, make sure all `ARROWHEAD_*_PORT` are set to `8443`, and all `ARROWHEAD_*_HOST` are set to the host where `./arrowhead-lite` is running (e.g., `localhost`).
 
 Remember to source the file to load the configurations:
 
 ```bash
-source arrowhead-lite.env
+source my-arrowhead.env
 ```
 
 Try the Arrowhead CLI tool to verify your setup:
@@ -93,6 +72,8 @@ This tutorial walks you through creating an Arrowhead-based car manufacturing sy
 2. A **Car Provider**: Creates cars and assigns them unique serial numbers provided by the **Serial Number Generator**.
 3. A **Car Consumer**: Orders cars from the **Car Provider**.
 
+**Note**: Complete implementation examples for all three services are available in the `examples/` directory.
+
 ### Step 0: Prepare the Environment
 
 Create a Python virtual environment and install the SDK:
@@ -104,29 +85,26 @@ pip install .
 ```
 
 ### Step 1: Register Systems
-The `arrowhead systems register` command creates the necessary certificates and registers the system with the Service Registry in one step.
+The `arrowhead systems register` command creates the necessary certificates and registers the system with the Service Registry in one step. Run each command from the respective examples directory so certificates are generated in the correct location.
 
 ```bash
 # Ensure your environment variables are loaded
-source arrowhead-lite.env
+source my-arrowhead.env
 
-# Create the serial number generator system
-mkdir serial-number-generator
-cd serial-number-generator
+# Register the serial number generator system
+cd examples/serial_number_generator
 arrowhead systems register --name serialgenerator --address localhost --port 8882
-cd ..
+cd ../..
 
-# Create the car provider system
-mkdir carprovider
-cd carprovider
+# Register the car provider system
+cd examples/carprovider
 arrowhead systems register --name carprovider --address localhost --port 8880
-cd ..
+cd ../..
 
-# Create the consumer system
-mkdir carconsumer
-cd carconsumer
+# Register the consumer system
+cd examples/carconsumer
 arrowhead systems register --name carconsumer --address localhost --port 8881
-cd ..
+cd ../..
 
 # Verify all systems are registered
 arrowhead systems ls
@@ -159,175 +137,41 @@ arrowhead auths add --consumer carprovider --provider serialgenerator --service 
 arrowhead auths ls
 ```
 
-### Step 4: Serial Number Generator Implementation
-Navigate to the `serial-number-generator` directory and create `main.py`.
+### Step 4: Implementation Files
+The complete implementations for all three services are available in the `examples/` directory:
 
-```python
-# serial-number-generator/main.py
-import asyncio
-import logging
+- **`examples/serial-number-generator/main.py`** - A simple service that generates unique sequential serial numbers via a POST endpoint `/generate`. Maintains an internal counter and returns JSON responses with the next available serial number.
 
-from arrowhead import System, Request, Response
+- **`examples/carprovider/main.py`** - A car manufacturing service that provides two endpoints:
+  - `POST /carfactory` - Creates new cars by accepting brand/color data, requesting a serial number from the serial generator, and storing the car with its assigned serial number
+  - `GET /carfactory` - Returns a list of all manufactured cars with their details
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+- **`examples/carconsumer/main.py`** - A consumer application that demonstrates service orchestration by ordering a Toyota car from the car provider and then retrieving the complete list of manufactured cars. Runs once and exits.
 
-serial_counter = 1
-system = System(name="serialgenerator", port=8882, address="localhost")
-
-@system.service(name="generate-serial-number", method="POST", endpoint="/generate")
-async def generate_serial_number(_: Request) -> Response:
-    global serial_counter
-    logger.info("Handling request to generate serial number")
-    
-    current_serial = serial_counter
-    serial_counter += 1
-    
-    logger.info(f"Generated serial number: {current_serial}")
-    return Response({"serial_number": current_serial})
-
-logger.info(f"Starting serial number generator '{system.name}' on {system.address}:{system.port}...")
-asyncio.run(system.run())
-```
-
-### Step 5: Car Provider System Implementation
-Navigate to the `carprovider` directory and create `main.py`.
-
-```python
-# carprovider/main.py
-import asyncio
-import json
-import logging
-from dataclasses import asdict, dataclass
-from typing import List
-
-from arrowhead import System, Request, Response
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-@dataclass
-class Car:
-    brand: str
-    color: str
-    serial_number: str
-
-cars: List[Car] = []
-system = System(name="carprovider", port=8880, address="localhost")
-
-@system.service(name="create-car", method="POST", endpoint="/carfactory")
-async def create_car(request: Request) -> Response:
-    logger.info("Handling request to create a car")
-    if not request.payload:
-        logger.error("No payload provided in the request")
-        return Response({"status": "error", "message": "No payload provided."}, status_code=400)
-
-    car_data = json.loads(request.payload)
-    
-    logger.info("Requesting serial number from serial generator service")
-    serial_response = await system.send_request("generate-serial-number")
-    serial_data = json.loads(serial_response.decode("utf-8"))
-    serial_number = serial_data["serial_number"]
-    logger.info(f"Received serial number: {serial_number}")
-    
-    new_car = Car(
-        brand=car_data["brand"], 
-        color=car_data["color"],
-        serial_number=serial_number
-    )
-    cars.append(new_car)
-    logger.info(f"Car created: {new_car}")
-    
-    return Response({
-        "status": "success", 
-        "message": f"Car '{new_car.brand}' created with serial number {serial_number}.",
-        "serial_number": serial_number
-    }, status_code=200)
-
-@system.service(name="get-cars", method="GET", endpoint="/carfactory")
-async def get_cars(_: Request) -> Response:
-    logger.info("Handling request to get cars")
-    return Response([asdict(car) for car in cars])
-
-logger.info(f"Starting provider '{system.name}' on {system.address}:{system.port}...")
-asyncio.run(system.run())
-```
-
-### Step 6: Car Consumer System Implementation
-Navigate to the `carconsumer` directory and create `main.py`.
-
-```python
-# carconsumer/main.py
-import asyncio
-import json
-import logging
-from dataclasses import asdict, dataclass
-
-from arrowhead import System
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-@dataclass
-class Car:
-    brand: str
-    color: str
-    serial_number: str | None = None
-
-async def main():
-    async with System(name="carconsumer", port=8881, address="localhost") as system:
-        car = Car(brand="Toyota", color="Red")
-        logger.info(f"Requesting to create car: {car}")
-        response = await system.send_request("create-car", json.dumps(asdict(car)).encode("utf-8"))
-        logger.info("Car consumer started. Sending requests...")
-        logger.info(f"Got response: {response.decode('utf-8')}")
-
-        logger.info("Retrieving cars...")
-        response = await system.send_request("get-cars")
-        cars = [Car(**car_data) for car_data in json.loads(response.decode("utf-8"))]
-
-        logger.info("Retrieved cars:")
-        for car in cars:
-            logger.info(f"  - {car.brand} ({car.color}) - Serial: {car.serial_number}")
-
-try:
-    asyncio.run(main())
-except KeyboardInterrupt:
-    logger.info("Consumer stopped by user")
-except Exception as e:
-    logger.info(f"Error: {e}")
-```
-
-### Step 7: Run the Multi-System Demo
+### Step 5: Run the Multi-System Demo
 
 Now you can run the complete multi-system demo in three separate terminal windows.
 
 **Terminal 1 - Start the Serial Generator:**
-Navigate to the `serial-number-generator` directory, source its environment file, and run the Python script.
-
 ```bash
 source venv/bin/activate
-cd serial-number-generator
+cd examples/serial-number-generator
 source serialgenerator.env
 python main.py
 ```
 
 **Terminal 2 - Start the Car Provider:**
-Navigate to the `carprovider` directory, source its environment file, and run the Python script.
-
 ```bash
 source venv/bin/activate
-cd carprovider
+cd examples/carprovider
 source carprovider.env
 python main.py
 ```
 
 **Terminal 3 - Run the Consumer:**
-Open a new terminal, navigate to the `carconsumer` directory, source its environment file, and run the script.
-
 ```bash
 source venv/bin/activate
-cd carconsumer
+cd examples/carconsumer
 source carconsumer.env
 python main.py
 ```
@@ -340,6 +184,16 @@ INFO:__main__:Retrieving cars...
 INFO:__main__:Retrieved cars:
   - Toyota (Red) - Serial: 1
 ```
+
+### Step 6: Integration Tests
+
+The file `examples/test.py` contains an integration test for the application that can be run with `pytest`. This test simulates the complete interaction between the three services entirely in-memory, without requiring any authentication, network calls, or a running Arrowhead server. It works by using the SDK's `arrowhead.TestHarness` class, which wires the systems together. When one system tries to send a request to another, the harness intercepts the call and routes it directly to the correct service handler on the provider system.
+
+```
+python -m pytest examples/test.py
+```
+
+
 
 ## CLI Reference
 
@@ -446,44 +300,60 @@ async def my_service(request: Request) -> Response:
 
 **Send requests to other services:**
 ```python
-# Send request without payload
-response = await system.send_request("service-name")
+from arrowhead import Request, Response
 
-# Send request with payload
-payload = json.dumps({"key": "value"}).encode("utf-8")
-response = await system.send_request("service-name", payload)
+# Create a request object. The payload will be automatically JSON encoded.
+request = Request(payload={"key": "value"})
 
-# Send request with query parameters
-response = await system.send_request("service-name", params={"param1": "value1"})
+# Send the request and receive a Response object.
+response: Response = await system.send("service-name", request)
+
+# The response content is automatically parsed if it's JSON.
+print(response.content) # -> {'result': 'success'}
+print(response.status_code) # -> 200
 ```
 
-**`send_request` parameters:**
+**`send` parameters:**
 - `service_def`: Service definition name to call
-- `payload`: Request body as bytes (optional)
-- `params`: Query parameters as dict (optional)
-- **Returns**: Response body as bytes
+* `request`: An `arrowhead.Request` object containing the payload, query parameters, etc.
+* **Returns**: An `arrowhead.Response` object with the parsed response.
 
 ### Running Systems
 
 **Start a provider system:**
 ```python
+# Provide a service
+@system.service("some-service", method="POST", endpoint="/echo")
+async def service(request: Request) -> Response:
+    return Response({"message": "Hello, World!"})
+
 # Run system (blocks until stopped)
-asyncio.run(system.run())
+system.run()
 ```
 
-**Use system as consumer:**
+**Start a consumer system:**
 ```python
+# Provide a service
+@system.main()
 async def main():
-    async with System(name="consumer", port=8081, address="localhost") as system:
-        response = await system.send_request("some-service")
+    response = await system.send("some-service", Request(payload={"data": "hello"}))
 
-asyncio.run(main())
+system.run()
+```
+
+**Start a provider system that is also a consumer:**
+```python
+@system.service("some-service", method="POST", endpoint="/echo")
+async def service(request: Request) -> Response:
+    response = await system.send("another-service", Request())
+    return Response({"message": f"Hello, World! The other service said: {response.content}"})
+
+system.run()
 ```
 
 ### Complete Example
 
 ```python
-import asyncio
 import json
 from arrowhead import System, Request, Response
 
@@ -493,8 +363,7 @@ system = System(name="example-system", port=8080, address="localhost")
 # Provide a service
 @system.service("echo", method="POST", endpoint="/echo")
 async def echo_service(request: Request) -> Response:
-    data = json.loads(request.payload)
-    return Response({"echo": data["message"]})
+    return Response({"echo": request.payload["message"]})
 
 # Provide a service with path parameters
 @system.service("get-user", method="GET", endpoint="/users/{user_id}")
@@ -503,26 +372,39 @@ async def get_user(request: Request) -> Response:
     return Response({"user_id": user_id, "name": f"User {user_id}"})
 
 # Start the system
-asyncio.run(system.run())
+system.run()
 ```
 
 ## Development
 
-### Requirements
-- Python 3.8+
-- `pip install -r requirements.txt`
+### Tooling
 
-### Testing
+This project uses `uv` for dependency management and `ruff` for linting and formatting. It is recommended to use the provided `Makefile` for common development tasks.
+
+### Setup
 ```bash
-# Install development dependencies
-pip install -e ".[dev]"
+# Install uv, create a virtual environment, and sync dependencies
+make sync
 
-# Run tests
-pytest
+# To activate the virtual environment manually
+source .venv/bin/activate
+```
 
-# Run linting and type checking
-black .
-isort .
-flake8
-mypy .
+### Running Checks
+
+```bash
+# Run all tests with pytest
+make test
+
+# Run tests with a coverage report
+make test-cov
+
+# Format code with ruff
+make format
+
+# Lint code with ruff
+make lint
+
+# Run type checks with pyright
+make check
 ```

@@ -6,6 +6,7 @@ This package provides a high-level API for developing Arrowhead-compatible appli
 
 from .http import Request, Response
 from .system import System
+from .simulator import Simulator
 
 __version__ = "0.2.0"
-__all__ = ["System", "Request", "Response"]
+__all__ = ["System", "Request", "Response", "Simulator"]

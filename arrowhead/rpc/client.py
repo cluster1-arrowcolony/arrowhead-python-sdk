@@ -5,7 +5,8 @@ import ssl
 import shutil
 import tempfile
 import os
-from typing import Dict, Optional, Tuple, List
+from typing import Optional, List
+from pathlib import Path
 
 import httpx
 from cryptography.hazmat.primitives import serialization
@@ -13,7 +14,7 @@ from cryptography.hazmat.primitives.serialization import pkcs12
 
 from arrowhead.security.cert_manager import CertManager
 
-from .model import (AddAuthorizationRequest, Authorization, AuthorizationsResponse, MatchedService, OrchestrationRequest, OrchestrationResponse, ProviderSystem, ServiceRegistrationRequest, ServicesResponse, System, Service, SystemRegistration, SystemsResponse)
+from .model import (AddAuthorizationRequest, Authorization, AuthorizationsResponse, OrchestrationRequest, OrchestrationResponse, ProviderSystem, ServiceRegistrationRequest, ServicesResponse, System, Service, SystemRegistration, SystemsResponse)
 from .config import Config
 
 
@@ -29,53 +30,43 @@ class Client:
     client: httpx.AsyncClient
     _systems_cache: Optional[List[System]] = None  # A cache storing the list of systems to avoid redundant API calls
     _services_cache: Optional[List[Service]] = None  # A cache storing the list of services to avoid redundant API calls.
+    ssl_certfile: str
+    ssl_keyfile: str
 
     def __init__(self, config: Config) -> None:
         """Initialize the client with configuration."""
         self.config = config
         self._temp_dir: Optional[str] = None
-        self.client = self._create_http_client()
         self._systems_cache: Optional[List[System]] = None
         self._services_cache: Optional[List[Service]] = None
 
-    @staticmethod
-    def setup_tls(keystore_path: str, password: Optional[str]) -> Tuple[str, str, str]:
-        """
-        Helper to extract certs from a PKCS#12 file into temporary PEM files.
-        Returns a tuple of (temp_directory, cert_file_path, key_file_path).
-        """
-        with open(keystore_path, "rb") as f:
+        # Load keystore and truststore for TLS  
+        with open(self.config.keystore_path, "rb") as f:
             p12_data = f.read()
 
-        pvkey, cert, additional_certs = pkcs12.load_key_and_certificates(
-            p12_data, password.encode() if password else None
-        )
+        password = self.config.keystore_password.encode() if self.config.keystore_password else None
+        pvkey, certificate, additional_certs = pkcs12.load_key_and_certificates(p12_data, password)
 
-        if pvkey is None or cert is None:
+        if pvkey is None or certificate is None:
             raise ValueError("Failed to load private key or certificate from keystore")
 
-        cert_chain = [cert]
-        if additional_certs:
-            cert_chain.extend(additional_certs)
-
         temp_dir = tempfile.mkdtemp()
-        from pathlib import Path
-        cert_path = str(Path(temp_dir) / "cert.pem")
-        key_path = str(Path(temp_dir) / "key.pem")
+        ssl_certfile = str(Path(temp_dir) / "cert.pem")
+        ssl_keyfile = str(Path(temp_dir) / "key.pem")
 
-        with open(cert_path, "wb") as cert_file:
-            for certificate in cert_chain:
-                cert_file.write(certificate.public_bytes(serialization.Encoding.PEM))
+        with open(ssl_certfile, "wb") as cert_file:
+            for c in [certificate] + additional_certs:
+                cert_file.write(c.public_bytes(serialization.Encoding.PEM))
 
-        with open(key_path, "wb") as key_file:
+        with open(ssl_keyfile, "wb") as key_file:
             key_file.write(pvkey.private_bytes(serialization.Encoding.PEM,
-                                                    serialization.PrivateFormat.PKCS8,
-                                                    serialization.NoEncryption()))
+                                               serialization.PrivateFormat.PKCS8,
+                                               serialization.NoEncryption()))
+        self._temp_dir = temp_dir
+        self.ssl_certfile = ssl_certfile
+        self.ssl_keyfile = ssl_keyfile
 
-        return temp_dir, cert_path, key_path
-
-    def _create_http_client(self) -> httpx.AsyncClient:
-        """Create an HTTP client with TLS configuration."""
+        # Setup HTTP client with TLS
         if not (self.config.keystore_path and self.config.truststore_path):
             raise ValueError("Keystore and truststore paths are required for TLS.")
 
@@ -83,12 +74,11 @@ class Client:
                     self.config.keystore_path,
                     self.config.truststore_path)
         
-        self._temp_dir, cert_path, key_path = Client.setup_tls(self.config.keystore_path, self.config.keystore_password)
         context = ssl.create_default_context(purpose=ssl.Purpose.SERVER_AUTH, cafile=self.config.truststore_path)
-        context.load_cert_chain(certfile=cert_path, keyfile=key_path)
+        context.load_cert_chain(certfile=self.ssl_certfile, keyfile=self.ssl_keyfile)
         logger.debug("SSLContext created for httpx client with explicit cert chain.")
 
-        return httpx.AsyncClient(verify=context, http2=True)
+        self.client = httpx.AsyncClient(verify=context, http2=True, timeout=10.0)
 
     def _build_url(self, service: str, path: str) -> str:
         """Build URL for a core service API."""
@@ -105,7 +95,22 @@ class Client:
             raise ValueError(f"Unknown core service: {service}")
         return f"https://{host}:{port}/{service}{path}"
 
-    async def _make_request(
+    async def send(self, request: httpx.Request) -> httpx.Response:
+        """
+        Sends an HTTP request.
+        """
+        try:
+            response = await self.client.send(request)
+            response.raise_for_status()
+            return response
+        except httpx.ConnectError as e:
+            logger.error(f"Connection to {e.request.url} failed. Is the server running and accessible?")
+            raise
+        except httpx.RequestError as e:
+            logger.error(f"Failed to send request: {e}")
+            raise
+
+    async def request(
         self,
         method: str,
         url: str,
@@ -116,7 +121,7 @@ class Client:
         """Make an HTTP request with error handling."""
         logger.debug(f"Sending {method} request to {url}")
         try:
-            response = await self.client.request(method, url, timeout=10.0, **kwargs)
+            response = await self.client.request(method, url, **kwargs)
             if response.status_code != expected_status:
                 logger.error(f"{error_msg}: {response.status_code} - {response.text}")
                 response.raise_for_status()
@@ -133,7 +138,7 @@ class Client:
         url = self._build_url("orchestrator", "/orchestration")
         data = request.model_dump(by_alias=True)
 
-        response = await self._make_request(
+        response = await self.request(
             "POST",
             url,
             error_msg="Failed to orchestrate",
@@ -142,42 +147,12 @@ class Client:
         )
         return OrchestrationResponse(**response.json())
 
-    async def send_request(
-        self,
-        service: MatchedService,
-        payload: Optional[bytes] = None,
-        query_params: Dict[str, str] = {},
-        content_type: str = "application/json",
-        accept: str = "application/json",
-    ) -> bytes:
-        """Send an request to a matched service."""
-        token = service.authorization_tokens.get("HTTP-SECURE-JSON")
-        if not token:
-            raise ValueError("No authorization token found")
-
-        request_params = query_params.copy() if query_params else {}
-        request_params["token"] = token
-        
-        method = service.metadata.get("http-method")
-        if not method:
-            raise ValueError("No HTTP method found in service metadata")
-        
-        response = await self._make_request(
-            method,
-            f"https://{service.provider.address}:{service.provider.port}{service.service_uri}",
-            error_msg="Failed to send service request",
-            params=request_params,
-            content=payload,
-            headers={"Content-Type": content_type, "Accept": accept},
-        )
-        return response.content
-
     async def register_system(self, system_reg: SystemRegistration) -> System:
         """Register a system via management API."""
         url = self._build_url("serviceregistry", "/mgmt/systems")
         data = system_reg.model_dump(by_alias=True)
 
-        response = await self._make_request(
+        response = await self.request(
             "POST",
             url,
             expected_status=201,
@@ -192,7 +167,7 @@ class Client:
     async def unregister_system_by_id(self, system_id: int) -> None:
         """Unregister a system by ID."""
         url = self._build_url("serviceregistry", f"/mgmt/systems/{system_id}")
-        await self._make_request(
+        await self.request(
             "DELETE",
             url,
             error_msg="Failed to unregister system",
@@ -204,7 +179,7 @@ class Client:
         """Get all registered systems."""
         if self._systems_cache is None:
             url = self._build_url("serviceregistry", "/mgmt/systems?direction=ASC&sort_field=id")
-            response = await self._make_request("GET", url, error_msg="Failed to get systems", headers={"Accept": "*/*"})
+            response = await self.request("GET", url, error_msg="Failed to get systems", headers={"Accept": "*/*"})
             systems_response = SystemsResponse.model_validate(response.json())
             self._systems_cache = systems_response.systems
         return self._systems_cache
@@ -212,7 +187,7 @@ class Client:
     async def get_system_by_id(self, system_id: int) -> System:
         """Get system by ID."""
         url = self._build_url("serviceregistry", f"/mgmt/systems/{system_id}")
-        response = await self._make_request(
+        response = await self.request(
             "GET", url, error_msg="Failed to get system", headers={"Accept": "*/*"}
         )
 
@@ -259,7 +234,7 @@ class Client:
         url = self._build_url("serviceregistry", "/mgmt/services")
         data = service_reg.model_dump(by_alias=True)
 
-        response = await self._make_request(
+        response = await self.request(
             "POST",
             url,
             expected_status=201,
@@ -273,7 +248,7 @@ class Client:
     async def unregister_service(self, service_id: int) -> None:
         """Unregister service by ID."""
         url = self._build_url("serviceregistry", f"/mgmt/services/{service_id}")
-        await self._make_request(
+        await self.request(
             "DELETE",
             url,
             error_msg="Failed to unregister service",
@@ -285,7 +260,7 @@ class Client:
         """Get all registered services."""
         if self._services_cache is None:
             url = self._build_url("serviceregistry", "/mgmt/services?direction=ASC&sort_field=id")
-            response = await self._make_request(
+            response = await self.request(
                 "GET", url, error_msg="Failed to get services", headers={"Accept": "*/*"}
             )
             services_response = ServicesResponse.model_validate(response.json())
@@ -295,7 +270,7 @@ class Client:
     async def get_service_by_id(self, service_id: int) -> Service:
         """Get service by ID."""
         url = self._build_url("serviceregistry", f"/mgmt/services/{service_id}")
-        response = await self._make_request(
+        response = await self.request(
             "GET", url, error_msg="Failed to get service", headers={"Accept": "*/*"}
         )
         return Service.model_validate(response.json())
@@ -353,7 +328,7 @@ class Client:
         url = self._build_url("authorization", "/mgmt/intracloud")
         data = auth_req.model_dump(by_alias=True)
 
-        response = await self._make_request(
+        response = await self.request(
             "POST",
             url,
             expected_status=201,
@@ -371,7 +346,7 @@ class Client:
     async def get_authorizations(self) -> List[Authorization]:
         """Get all authorization rules."""
         url = self._build_url("authorization", "/mgmt/intracloud?direction=ASC&sort_field=id")
-        response = await self._make_request(
+        response = await self.request(
             "GET",
             url,
             error_msg="Failed to get authorizations",
@@ -383,7 +358,7 @@ class Client:
     async def remove_authorization(self, auth_id: int) -> None:
         """Remove authorization rule by ID."""
         url = self._build_url("authorization", f"/mgmt/intracloud/{auth_id}")
-        await self._make_request(
+        await self.request(
             "DELETE",
             url,
             error_msg="Failed to remove authorization rule",
@@ -457,7 +432,7 @@ export ARROWHEAD_SYSTEM_PORT={port}
         url = self._build_url("serviceregistry", "/mgmt/systems/batch")
         data = [reg.model_dump(by_alias=True) for reg in system_regs]
 
-        response = await self._make_request(
+        response = await self.request(
             "POST",
             url,
             expected_status=201,
@@ -473,7 +448,7 @@ export ARROWHEAD_SYSTEM_PORT={port}
         url = self._build_url("serviceregistry", "/mgmt/services/batch")
         data = [reg.model_dump(by_alias=True) for reg in service_regs]
 
-        response = await self._make_request(
+        response = await self.request(
             "POST",
             url,
             expected_status=201,
@@ -489,7 +464,7 @@ export ARROWHEAD_SYSTEM_PORT={port}
         url = self._build_url("authorization", "/mgmt/intracloud/batch")
         data = [req.model_dump(by_alias=True) for req in auth_reqs]
 
-        response = await self._make_request(
+        response = await self.request(
             "POST",
             url,
             expected_status=201,
