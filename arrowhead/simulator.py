@@ -1,6 +1,5 @@
 from collections import defaultdict
-from types import CoroutineType
-from typing import Any, Callable, Dict, List, Set
+from typing import Any, Callable, Dict, List, Set, Coroutine
 import functools
 
 import httpx
@@ -17,7 +16,7 @@ class Simulator:
     """
     systems: Dict[str, System]
     service_map: Dict[str, List[System]]
-    original_send: Dict[str, Callable[..., CoroutineType[Any, Any, Response]]]
+    original_send: Dict[str, Callable[..., Coroutine[Any, Any, Response]]]
     clients: Dict[str, httpx.AsyncClient]
     crashed_systems: Set[str]
     partitions: Dict[str, Set[str]]
@@ -25,7 +24,7 @@ class Simulator:
     def __init__(self, systems: List[System]):
         self.systems: Dict[str, System] = {s.name: s for s in systems}
         self.service_map: Dict[str, List[System]] = defaultdict(list)
-        self.original_send: Dict[str, Callable[..., CoroutineType[Any, Any, Response]]] = {}
+        self.original_send: Dict[str, Callable[..., Coroutine[Any, Any, Response]]] = {}
         self.clients: Dict[str, httpx.AsyncClient] = {}
         self.crashed_systems = set()
         self.partitions = defaultdict(set)
