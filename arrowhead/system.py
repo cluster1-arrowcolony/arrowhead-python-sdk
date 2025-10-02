@@ -69,6 +69,8 @@ class System:
         def decorator(handler: Callable) -> Callable:
             if self.running:
                 raise RuntimeError("Cannot register new services after the server has started.")
+            if name in self.services:
+                raise ValueError(f"Service '{name}' is already registered. Service names must be unique.")
             self.services[name] = Service(handler, method.upper(), endpoint)
             return handler
         return decorator
