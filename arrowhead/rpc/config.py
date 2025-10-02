@@ -49,11 +49,11 @@ class Config:
             cloud_keystore_alias=os.getenv("ARROWHEAD_CLOUD_KEYSTORE_ALIAS"),
         )
 
-def read(var: str, default = None) -> str:
+def read(var: str, default: Optional[str] = None) -> str:
     """Helper function to assert that an environment variable is set."""
     value = os.getenv(var)
     if value:
         return value
-    if default:
+    if default is not None:
         return default
     raise ValueError(f"Environment variable {var} must be set.")
