@@ -40,31 +40,38 @@ class Client:
         self._systems_cache: Optional[List[System]] = None
         self._services_cache: Optional[List[Service]] = None
 
-        # Load keystore and truststore for TLS  
-        with open(self.config.keystore_path, "rb") as f:
-            p12_data = f.read()
+        # Load keystore and truststore for TLS
+        temp_dir = None
+        try:
+            with open(self.config.keystore_path, "rb") as f:
+                p12_data = f.read()
 
-        password = self.config.keystore_password.encode() if self.config.keystore_password else None
-        pvkey, certificate, additional_certs = pkcs12.load_key_and_certificates(p12_data, password)
+            password = self.config.keystore_password.encode() if self.config.keystore_password else None
+            pvkey, certificate, additional_certs = pkcs12.load_key_and_certificates(p12_data, password)
 
-        if pvkey is None or certificate is None:
-            raise ValueError("Failed to load private key or certificate from keystore")
+            if pvkey is None or certificate is None:
+                raise ValueError("Failed to load private key or certificate from keystore")
 
-        temp_dir = tempfile.mkdtemp()
-        ssl_certfile = str(Path(temp_dir) / "cert.pem")
-        ssl_keyfile = str(Path(temp_dir) / "key.pem")
+            temp_dir = tempfile.mkdtemp()
+            ssl_certfile = str(Path(temp_dir) / "cert.pem")
+            ssl_keyfile = str(Path(temp_dir) / "key.pem")
 
-        with open(ssl_certfile, "wb") as cert_file:
-            for c in [certificate] + additional_certs:
-                cert_file.write(c.public_bytes(serialization.Encoding.PEM))
+            with open(ssl_certfile, "wb") as cert_file:
+                for c in [certificate] + additional_certs:
+                    cert_file.write(c.public_bytes(serialization.Encoding.PEM))
 
-        with open(ssl_keyfile, "wb") as key_file:
-            key_file.write(pvkey.private_bytes(serialization.Encoding.PEM,
-                                               serialization.PrivateFormat.PKCS8,
-                                               serialization.NoEncryption()))
-        self._temp_dir = temp_dir
-        self.ssl_certfile = ssl_certfile
-        self.ssl_keyfile = ssl_keyfile
+            with open(ssl_keyfile, "wb") as key_file:
+                key_file.write(pvkey.private_bytes(serialization.Encoding.PEM,
+                                                   serialization.PrivateFormat.PKCS8,
+                                                   serialization.NoEncryption()))
+            self._temp_dir = temp_dir
+            self.ssl_certfile = ssl_certfile
+            self.ssl_keyfile = ssl_keyfile
+        except Exception:
+            # Clean up temp directory if constructor fails
+            if temp_dir and os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+            raise
 
         # Setup HTTP client with TLS
         if not (self.config.keystore_path and self.config.truststore_path):
