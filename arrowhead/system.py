@@ -92,7 +92,7 @@ class System:
         for name, service in self.services.items():
             logger.debug(f"Building route for service '{name}' at {service.endpoint}")
 
-            def _create_route_handler(service: Service) -> Callable:
+            def _create_route_handler(service: Service, service_name: str) -> Callable:
                 """Creates a handler for a specific service, correctly capturing it in a closure."""
 
                 async def handler(fastapi_request: FastAPIRequest) -> FastAPIResponse:
@@ -101,13 +101,13 @@ class System:
                         response = await service.handler(request)
                         return response.into_fastapi()
                     except Exception as e:
-                        logger.error(f"Handler for '{name}' failed: {e}", exc_info=True)
+                        logger.error(f"Handler for '{service_name}' failed: {e}", exc_info=True)
                         error_content = json.dumps({"error": "An internal server error occurred."})
                         return FastAPIResponse(content=error_content, status_code=500, media_type="application/json")
 
                 return handler
 
-            route_handler = _create_route_handler(service)
+            route_handler = _create_route_handler(service, name)
             fastapi.add_api_route(path=service.endpoint, endpoint=route_handler, methods=[service.method])
         return fastapi
 
