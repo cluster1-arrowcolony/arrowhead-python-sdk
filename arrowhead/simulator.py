@@ -78,10 +78,10 @@ class Simulator:
         provider = providers[0]
         
         if provider.name in self.crashed_systems:
-            raise httpx.ConnectError(f"Simulated node crash: System '{provider.name}' is down.")
-        
+            raise httpx.ConnectError(f"Simulated node crash: System '{provider.name}' is down.", request=None)
+
         if provider.name in self.partitions[consumer_name]:
-            raise httpx.ConnectError(f"Simulated network partition between '{consumer_name}' and '{provider.name}'.")
+            raise httpx.ConnectError(f"Simulated network partition between '{consumer_name}' and '{provider.name}'.", request=None)
 
         service = provider.services[service_name]
         assert service, "Service should exist for system"
