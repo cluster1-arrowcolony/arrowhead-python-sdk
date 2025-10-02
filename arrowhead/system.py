@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -39,6 +40,7 @@ class System:
     config: Optional[Config]  # Optional configuration
     client: Optional[Client]  # The Arrowhead client for orchestrating requests
     _main: Optional[Callable[[], Awaitable[None]]] # For the @system.main() decorator
+    _client_lock: asyncio.Lock  # Lock to prevent race conditions in client creation
 
     def __init__(
         self,
@@ -60,6 +62,7 @@ class System:
         self.running = False
         self.config = config
         self.client = None
+        self._client_lock = asyncio.Lock()
 
     def service(self, name: str, method: str, endpoint: str) -> Callable:
         """Decorator to register a function as an Arrowhead service provider."""
@@ -111,10 +114,10 @@ class System:
             fastapi.add_api_route(path=service.endpoint, endpoint=route_handler, methods=[service.method])
         return fastapi
 
-    def _server(self) -> uvicorn.Server:
+    async def _server(self) -> uvicorn.Server:
         """Internal method to create a Uvicorn server instance."""
         app = self._app()
-        client = self._client()
+        client = await self._client()
         return uvicorn.Server(uvicorn.Config(
             app,
             host=self.address,
@@ -126,11 +129,14 @@ class System:
             ssl_cert_reqs=ssl.CERT_REQUIRED,
         ))
 
-    def _client(self) -> Client:
+    async def _client(self) -> Client:
         """Lazily creates and returns the Arrowhead client."""
         if not self.client:
-            self.config = self.config or Config.load_from_env(privileged=False)
-            self.client = Client(self.config)
+            async with self._client_lock:
+                # Double-check pattern to prevent race conditions
+                if not self.client:
+                    self.config = self.config or Config.load_from_env(privileged=False)
+                    self.client = Client(self.config)
         return self.client
 
     async def send(self, service_def: str, request: Request) -> Response:
@@ -139,7 +145,7 @@ class System:
         Performs orchestration, converts the Arrowhead Request to an HTTPX Request,
         sends it, and converts the HTTPX Response back to an Arrowhead Response.
         """
-        client = self._client()
+        client = await self._client()
 
         orchestration_response = await client.orchestrate(OrchestrationRequest(self.name, self.address, self.port, service_def))
         if not orchestration_response.matches:
@@ -179,7 +185,8 @@ class System:
                 await self._main()
         elif self.services:
             logger.info(f"Starting server with mTLS on {self.address}:{self.port}")
-            await self._server().serve()
+            server = await self._server()
+            await server.serve()
         else:
             logger.warning("No services registered and no main function defined. Nothing to run.")
 
