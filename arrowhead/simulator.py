@@ -106,5 +106,10 @@ class Simulator:
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         del exc_type, exc_val, exc_tb
+        # Restore original send methods to systems
+        for name, system in self.systems.items():
+            if name in self.original_send:
+                system.send = self.original_send[name]
+        # Close HTTP clients
         for client in self.clients.values():
             await client.aclose()
