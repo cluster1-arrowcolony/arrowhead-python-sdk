@@ -189,7 +189,8 @@ def get_system(id: int) -> None:
 @click.option('--name', 'names', multiple=True, required=True, help='Name of a system. Can be used multiple times for batch registration.')
 @click.option('--address', 'addresses', multiple=True, required=True, help='Address of a system.')
 @click.option('--port', 'ports', multiple=True, required=True, type=int, help='Port of a system.')
-def register(names: Tuple[str], addresses: Tuple[str], ports: Tuple[int]) -> None:
+@click.option('--batch', is_flag=True, help='Use batch registration API (default: individual registration)')
+def register(names: Tuple[str], addresses: Tuple[str], ports: Tuple[int], batch: bool) -> None:
     r"""
     Register one or more systems concurrently.
 
@@ -305,21 +306,29 @@ def register(names: Tuple[str], addresses: Tuple[str], ports: Tuple[int]) -> Non
                 )
                 system_regs.append((system_reg, name))
 
-        # Batch register systems if any are ready
         results = []
         if system_regs:
             async with Client(config) as client:
-                reg_list = [reg for reg, _ in system_regs]
-                status_message = f"Batch registering {len(reg_list)} system(s)..."
-                with console.status(status_message):
-                    try:
-                        batch_results = await client.register_systems_batch(reg_list)
-                        for i, system in enumerate(batch_results):
-                            results.append((parsed_systems[i], system, None))
-                    except Exception as e:
-                        # If batch fails, mark all as failed
-                        for i, (_, name) in enumerate(system_regs):
-                            results.append((parsed_systems[i], None, str(e)))
+                if batch:
+                    reg_list = [reg for reg, _ in system_regs]
+                    status_message = f"Batch registering {len(reg_list)} system(s)..."
+                    with console.status(status_message):
+                        try:
+                            batch_results = await client.register_systems_batch(reg_list)
+                            for i, system in enumerate(batch_results):
+                                results.append((parsed_systems[i], system, None))
+                        except Exception as e:
+                            for i, (_, name) in enumerate(system_regs):
+                                results.append((parsed_systems[i], None, str(e)))
+                else:
+                    for i, (system_reg, name) in enumerate(system_regs):
+                        status_message = f"Registering system '{name}'..."
+                        with console.status(status_message):
+                            try:
+                                system = await client.register_system(system_reg)
+                                results.append((parsed_systems[i], system, None))
+                            except Exception as e:
+                                results.append((parsed_systems[i], None, str(e)))
 
         # Add certificate generation failures to results
         for i, (name, auth_info, error) in enumerate(cert_results):
@@ -422,7 +431,8 @@ def list_services() -> None:
 @click.option('--definition', 'definitions', multiple=True, required=True, help='Service definition name.')
 @click.option('--uri', 'uris', multiple=True, required=True, help='Service URI path.')
 @click.option('--method', 'methods', multiple=True, required=True, type=click.Choice(["GET", "POST", "PUT", "DELETE"]), help='HTTP method.')
-def register_service(systems: Tuple[str], definitions: Tuple[str], uris: Tuple[str], methods: Tuple[str]) -> None:
+@click.option('--batch', is_flag=True, help='Use batch registration API (default: individual registration)')
+def register_service(systems: Tuple[str], definitions: Tuple[str], uris: Tuple[str], methods: Tuple[str], batch: bool) -> None:
     """Register one or more services concurrently."""
     async def _main() -> None:
         if not (len(systems) == len(definitions) == len(uris) == len(methods)):
@@ -468,8 +478,24 @@ def register_service(systems: Tuple[str], definitions: Tuple[str], uris: Tuple[s
                 rprint("[yellow]No valid services to register.[/yellow]")
                 return
 
-            with console.status(f"Registering {len(service_regs)} services concurrently..."):
-                results = await client.register_services_batch(service_regs)
+            if batch:
+                with console.status(f"Batch registering {len(service_regs)} services..."):
+                    results = await client.register_services_batch(service_regs)
+            else:
+                results = []
+                for i, service_reg in enumerate(service_regs):
+                    service_name = definitions[i]
+                    with console.status(f"Registering service '{service_name}'..."):
+                        try:
+                            service = await client.register_service(
+                                all_systems[systems[i]],
+                                methods[i],
+                                definitions[i],
+                                uris[i]
+                            )
+                            results.append(service)
+                        except Exception as e:
+                            rprint(f"[red]Failed to register service '{service_name}': {e}[/red]")
 
             table = Table(title="Service Registration Summary")
             table.add_column("Service Definition", style="cyan")
@@ -628,7 +654,8 @@ def list_authorizations() -> None:
 @click.option('--consumer', 'consumers', multiple=True, required=True, help='Consumer system name. Can be used multiple times for batch authorization.')
 @click.option('--provider', 'providers', multiple=True, required=True, help='Provider system name.')
 @click.option('--service', 'services', multiple=True, required=True, help='Service definition.')
-def add_authorization(consumers: Tuple[str], providers: Tuple[str], services: Tuple[str]) -> None:
+@click.option('--batch', is_flag=True, help='Use batch authorization API (default: individual authorization)')
+def add_authorization(consumers: Tuple[str], providers: Tuple[str], services: Tuple[str], batch: bool) -> None:
     """Add one or more authorization rules."""
     async def _main() -> None:
         if not (len(consumers) == len(providers) == len(services)):
@@ -681,8 +708,21 @@ def add_authorization(consumers: Tuple[str], providers: Tuple[str], services: Tu
                 rprint("[yellow]No valid authorization rules to add.[/yellow]")
                 return
 
-            with console.status(f"Adding {len(auth_reqs)} authorization rules in batch..."):
-                results = await client.add_authorizations_batch(auth_reqs)
+            if batch:
+                with console.status(f"Batch adding {len(auth_reqs)} authorization rules..."):
+                    results = await client.add_authorizations_batch(auth_reqs)
+            else:
+                results = []
+                for i, auth_req in enumerate(auth_reqs):
+                    consumer_name = consumers[i]
+                    provider_name = providers[i]
+                    service_def = services[i]
+                    with console.status(f"Adding authorization: {consumer_name} -> {provider_name} -> {service_def}..."):
+                        try:
+                            auth = await client.add_authorization(consumer_name, provider_name, service_def)
+                            results.append(auth)
+                        except Exception as e:
+                            rprint(f"[red]Failed to add authorization: {e}[/red]")
 
             table = Table(title="Authorization Rules Summary")
             table.add_column("Consumer", style="cyan")

@@ -308,17 +308,21 @@ Lists all registered systems.
 Retrieves detailed information about a specific system by its ID.
 *   **`--id`, `-i`** (`int`, required): The numerical ID of the system.
 
-#### 5.3.3. `arrowhead systems register --name <name> --address <address> --port <port> [...]`
+#### 5.3.3. `arrowhead systems register --name <name> --address <address> --port <port> [--batch] [...]`
 
 Registers one or more Arrowhead systems. This command also generates a PKCS#12 keystore and a public key file (`.pub`) for each registered system, and an environment file (`.env`) with default configurations.
 
-*   **`--name`** (`str`, multiple, required): The unique name of the system. Can be used multiple times for batch registration.
-        *   **Requirement:** Must be alphanumeric (letters A-Z, a-z, and digits 0-9).
+*   **`--name`** (`str`, multiple, required): The unique name of the system. Can be used multiple times for registering multiple systems.
         *   **Requirement:** Must be alphanumeric (letters A-Z, a-z, and digits 0-9).
 *   **`--address`** (`str`, multiple, required): The IP address or hostname of the system.
 *   **`--port`** (`int`, multiple, required): The network port of the system.
+*   **`--batch`** (`boolean`, optional): If set, uses the batch registration API endpoint (`/mgmt/systems/batch`) to register all systems in a single request. By default (without this flag), systems are registered individually using the standard endpoint (`/mgmt/systems`).
 
-**Batch Registration:** When registering multiple systems, `name`, `address`, and `port` options must be provided for each system in corresponding order.
+**Registration Modes:**
+- **Individual Registration (default)**: Each system is registered separately via `POST /serviceregistry/mgmt/systems`. This is compatible with the official Arrowhead Framework.
+- **Batch Registration (`--batch` flag)**: All systems are registered in a single request via `POST /serviceregistry/mgmt/systems/batch` for improved performance. This is a non-standard feature not supported by the official Arrowhead Framework.
+
+**Multiple Systems:** When registering multiple systems, `name`, `address`, and `port` options must be provided for each system in corresponding order.
 
 **Certificate Generation:** For each system, this command generates an mTLS PKCS#12 keystore (e.g., `mysystem.p12`) and a public key file (e.g., `mysystem.pub`) using the configured root and cloud keystores (via environment variables, see `arrowhead certs gen`). If a PKCS#12 keystore with the system's name already exists, the generation step is skipped for that system, and the public key is extracted from the existing file. The extracted public key is then used as `authenticationInfo` during system registration.
 
@@ -353,7 +357,7 @@ Retrieves detailed information about a specific service by its ID.
 *   **`--id`, `-i`** (`int`, required): The numerical ID of the service.
 *   **`--authinfo`** (`boolean`, optional): If set, includes the provider system's authentication information (public key) in the output.
 
-#### 5.4.3. `arrowhead services register --system <name> --definition <name> --uri <path> --method <method> [...]`
+#### 5.4.3. `arrowhead services register --system <name> --definition <name> --uri <path> --method <method> [--batch] [...]`
 
 Registers one or more services. Services require an existing provider system to be registered first.
 
@@ -361,8 +365,13 @@ Registers one or more services. Services require an existing provider system to 
 *   **`--definition`** (`str`, multiple, required): The logical service definition name (e.g., "TemperatureService").
 *   **`--uri`** (`str`, multiple, required): The URI path where the service is exposed (e.g., `/temperature`).
 *   **`--method`** (`str`, multiple, required): The HTTP method the service responds to (e.g., `GET`, `POST`, `PUT`, `DELETE`).
+*   **`--batch`** (`boolean`, optional): If set, uses the batch registration API endpoint (`/mgmt/services/batch`) to register all services in a single request. By default (without this flag), services are registered individually using the standard endpoint (`/mgmt/services`).
 
-**Batch Registration:** Similar to `systems register`, multiple service parameters must be provided in corresponding order for batch registration.
+**Registration Modes:**
+- **Individual Registration (default)**: Each service is registered separately via `POST /serviceregistry/mgmt/services`. This is compatible with the official Arrowhead Framework.
+- **Batch Registration (`--batch` flag)**: All services are registered in a single request via `POST /serviceregistry/mgmt/services/batch` for improved performance. This is a non-standard feature not supported by the official Arrowhead Framework.
+
+**Multiple Services:** Similar to `systems register`, multiple service parameters must be provided in corresponding order when registering multiple services.
 
 #### 5.4.4. `arrowhead services unregister --id <id>`
 
@@ -377,15 +386,20 @@ Group of commands for managing authorization rules in the Authorization Core Sys
 
 Lists all registered authorization rules.
 
-#### 5.5.2. `arrowhead auths add --consumer <name> --provider <name> --service <definition> [...]`
+#### 5.5.2. `arrowhead auths add --consumer <name> --provider <name> --service <definition> [--batch] [...]`
 
 Adds one or more authorization rules. An authorization rule grants a `consumer` system access to a specific `service` provided by a `provider` system. All referenced systems and services must already be registered.
 
 *   **`--consumer`** (`str`, multiple, required): The name of the consumer system.
 *   **`--provider`** (`str`, multiple, required): The name of the provider system.
 *   **`--service`** (`str`, multiple, required): The service definition name.
+*   **`--batch`** (`boolean`, optional): If set, uses the batch authorization API endpoint (`/mgmt/intracloud/batch`) to add all authorization rules in a single request. By default (without this flag), rules are added individually using the standard endpoint (`/mgmt/intracloud`).
 
-**Batch Addition:** Multiple authorization rules can be added by providing corresponding `consumer`, `provider`, and `service` options. The CLI automatically resolves system and service IDs and finds associated interfaces.
+**Authorization Modes:**
+- **Individual Authorization (default)**: Each authorization rule is added separately via `POST /authorization/mgmt/intracloud`. This is compatible with the official Arrowhead Framework.
+- **Batch Authorization (`--batch` flag)**: All authorization rules are added in a single request via `POST /authorization/mgmt/intracloud/batch` for improved performance. This is a non-standard feature not supported by the official Arrowhead Framework.
+
+**Multiple Rules:** Multiple authorization rules can be added by providing corresponding `consumer`, `provider`, and `service` options. The CLI automatically resolves system and service IDs and finds associated interfaces.
 
 #### 5.5.3. `arrowhead auths remove --id <id>`
 
